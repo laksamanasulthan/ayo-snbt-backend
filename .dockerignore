@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+.git
+.gitignore
+.npm-cache
+.env
+*.log
+tests
+load
+drizzle

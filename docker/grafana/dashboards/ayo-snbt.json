@@ -1,0 +1,77 @@
+{
+  "title": "Ayo-SNBT",
+  "uid": "ayo-snbt",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "HTTP Requests / sec",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(ayosnbt_http_requests_total[1m])",
+          "legendFormat": "{{method}} {{route}} {{status}}"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "title": "P99 / P95 Latency",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(ayosnbt_http_request_duration_seconds_bucket[1m]))",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(ayosnbt_http_request_duration_seconds_bucket[1m]))",
+          "legendFormat": "p95"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "title": "Degradation Gates",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "ayosnbt_degradation_gate_mode",
+          "legendFormat": "{{gate}}"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 6
+      }
+    },
+    {
+      "title": "Queue Depth",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "ayosnbt_queue_depth",
+          "legendFormat": "{{queue}}"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      }
+    }
+  ]
+}

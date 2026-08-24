@@ -1,0 +1,26 @@
+# Video transcode worker: Node 22 + ffmpeg (HLS pipeline)
+# ---- deps (full — build stage needs dev deps) ----
+FROM node:22-alpine AS deps-dev
+RUN apk add --no-cache ffmpeg
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+# ---- build ----
+FROM node:22-alpine AS build
+RUN apk add --no-cache ffmpeg
+WORKDIR /app
+COPY --from=deps-dev /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+# ---- runtime ----
+FROM node:22-alpine AS runtime
+RUN apk add --no-cache ffmpeg
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+COPY --from=deps-dev /app/node_modules ./node_modules
+COPY package.json ./
+USER node
+CMD ["node", "dist/worker.js"]

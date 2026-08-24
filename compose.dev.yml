@@ -1,0 +1,165 @@
+name: ayo-snbt
+
+services:
+  # ── Data stores ─────────────────────────────────────────────────────
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ayosnbt
+      POSTGRES_PASSWORD: ayosnbt
+      POSTGRES_DB: ayosnbt
+    ports:
+      - "5433:5432"   # 5432 may clash with a host-local postgres; docker one lives on 5433
+    volumes:
+      # PG 18+ images need the mount at /var/lib/postgresql (versioned subdirs)
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ayosnbt -d ayosnbt"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgbouncer:
+    # Run pgbouncer directly with our ini (bypasses the image entrypoint's
+    # env rendering). Config: docker/pgbouncer.ini (transaction pooling).
+    image: pgbouncer/pgbouncer:latest
+    entrypoint: ["/opt/pgbouncer/pgbouncer"]
+    command: ["/etc/pgbouncer/pgbouncer.ini"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./docker/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./docker/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f pgbouncer || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/ayosnbt-images && mc mb --ignore-existing local/ayosnbt-videos && echo buckets-ready"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # ── Application ──────────────────────────────────────────────────────
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://ayosnbt:ayosnbt@pgbouncer:6432/ayosnbt
+      DIRECT_DATABASE_URL: postgres://ayosnbt:ayosnbt@postgres:5432/ayosnbt
+      REDIS_URL: redis://redis:6379
+      MONGO_URL: mongodb://mongo:27017/ayosnbt_chat
+      S3_ENDPOINT: http://minio:9000
+      SMTP_HOST: mailpit
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+
+  worker:
+    build: .
+    command: ["node", "dist/worker.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://ayosnbt:ayosnbt@pgbouncer:6432/ayosnbt
+      DIRECT_DATABASE_URL: postgres://ayosnbt:ayosnbt@postgres:5432/ayosnbt
+      REDIS_URL: redis://redis:6379
+      MONGO_URL: mongodb://mongo:27017/ayosnbt_chat
+      S3_ENDPOINT: http://minio:9000
+      SMTP_HOST: mailpit
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ── Observability ────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/ayo-snbt.json
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./docker/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/grafana/dashboards:/etc/grafana/dashboards:ro
+
+volumes:
+  pgdata:
+  redisdata:
+  mongodata:
+  miniodata:

@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: ayo-snbt-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:3000"]
+  - job_name: ayo-snbt-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker:3001"]

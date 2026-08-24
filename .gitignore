@@ -1,0 +1,35 @@
+# ── Dependencies & build ───────────────────────────────
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.npm-cache/
+.npm-ci-cache/
+
+# ── Environment (never commit secrets) ───────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+!.env.example
+!.env.production.example
+
+# ── Logs & temp ──────────────────────────────────────────
+*.log
+npm-debug.log*
+*.tmp
+*.temp
+test.mp4
+
+# ── Drizzle (keep migrations; ignore meta backups) ───────
+drizzle/meta/_journal.json.bak
+
+# ── IDE / OS ─────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ── Test artifacts ───────────────────────────────────────
+load/results/
+coverage/
