@@ -98,7 +98,15 @@ services:
 
   # ── Application ──────────────────────────────────────────────────────
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    # Polling dev watcher = hot reload inside the container (bind-mounted
+    # source; fs.watch events don't cross Docker Desktop's VirtioFS mounts)
+    command: ["node", "scripts/dev.mjs", "src/server.ts"]
+    volumes:
+      - .:/app
+      - /app/node_modules   # keep the container's Linux node_modules
     env_file: .env
     environment:
       DATABASE_URL: postgres://ayosnbt:ayosnbt@pgbouncer:6432/ayosnbt
@@ -122,8 +130,13 @@ services:
       - "3000:3000"
 
   worker:
-    build: .
-    command: ["node", "dist/worker.js"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    command: ["node", "scripts/dev.mjs", "src/worker.ts"]
+    volumes:
+      - .:/app
+      - /app/node_modules
     env_file: .env
     environment:
       DATABASE_URL: postgres://ayosnbt:ayosnbt@pgbouncer:6432/ayosnbt

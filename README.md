@@ -28,27 +28,47 @@ Simulation-based SNBT (Seleksi Nasional Berdasarkan Tes) exam-prep platform back
 - **RBAC**: roles/permissions seeded in Postgres; claims embedded in the JWT so authorization costs zero DB hits.
 - **100k req/s path**: stateless replicas behind HAProxy, layered caching (CDN → HAProxy → in-memory LRU → Redis), async offload via BullMQ, zero-copy S3 uploads/streaming, read replicas (Phase 7), k6 load suite.
 
-## Quick Start (dev)
+## Quick Start (dev) — ✅ Docker mode (recommended)
+
+> **Recommended:** run the ENTIRE stack (infra + API + worker) in Docker.
+> It is reproducible, matches the production topology, needs no local Node
+> runtime beyond npm for the database scripts, and **hot-reloads on code
+> changes** (tsx watch inside the containers). The alternative — running the
+> API/worker on your host — is covered below.
 
 ```bash
-cp .env.example .env          # defaults match compose.dev.yml
-docker compose -f compose.dev.yml up -d   # infra + api + worker
-npm run db:migrate           # apply migrations (direct connection)
-npm run db:seed              # seed RBAC roles/permissions
+cp .env.example .env                     # defaults match compose.dev.yml
+docker compose -f compose.dev.yml up -d --build   # infra + api + worker (builds dev images first)
+npm run db:migrate                      # apply migrations (direct connection)
+npm run db:seed                         # seed RBAC roles/permissions
 
 curl http://localhost:3000/health   # liveness
 curl http://localhost:3000/ready    # readiness + degradation snapshot
 open http://localhost:3000/docs     # Scalar API reference
 ```
 
+Save a source file and the API/worker restart automatically (polling dev watcher `scripts/dev.mjs`).
+Rebuild is only needed when **dependencies** change:
+
+```bash
+docker compose -f compose.dev.yml up -d --build api worker
+```
+
 Mailpit UI: http://localhost:8025 · MinIO console: http://localhost:9001 · Grafana: http://localhost:3001
 
-## Local development without Docker
+## Alternative — local development (host process)
+
+The Docker mode above is the recommended setup and already hot-reloads; use
+this alternative when you want the Node.js process on your host (e.g. to
+attach an IDE debugger directly). The infrastructure still runs in Docker;
+only the app runs on your host.
 
 ```bash
 npm install
+node node_modules/ffmpeg-static/install.js   # required in local mode (.npmrc skips it)
+docker compose -f compose.dev.yml up -d postgres pgbouncer redis mongo minio minio-init mailpit
 npm run dev                  # tsx watch src/server.ts
-npm run dev:worker           # tsx watch src/worker.ts
+npm run dev:worker           # tsx watch src/worker.ts (second terminal)
 npm test                     # vitest unit suite
 ```
 
