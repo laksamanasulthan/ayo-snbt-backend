@@ -118,7 +118,7 @@ src/
 │   ├── queue/ events/        #   BullMQ helpers, typed event bus
 │   ├── audit/ context/       #   audit trail, AsyncLocalStorage request context
 │   └── auth/ rbac/ backoff/ s3/ mongo/ mail/ metrics/ logger/
-tests/                        # vitest unit + integration suites (see docs/TESTING.md)
+tests/                        # vitest unit + integration suites (see docs/guides/TESTING.md)
 load/                         # k6 load scenarios (see load/README.md)
 docs/                         # full documentation (see docs/README.md)
 scripts/                      # dev tooling (docs link checker)

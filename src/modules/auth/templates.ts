@@ -1,5 +1,7 @@
+import { getEnv } from "../../config/index.js";
+
 export function verifyEmailTemplate(data: { token: string; name: string }): { subject: string; html: string } {
-  const url = "http://localhost:3000/auth/verify-email?token=" + encodeURIComponent(data.token);
+  const url = getEnv().FRONTEND_URL + "/auth/verify-email?token=" + encodeURIComponent(data.token);
   return {
     subject: "Ayo-SNBT — Verifikasi Email Kamu",
     html: `<!doctype html><html><body style="font-family:sans-serif;max-width:560px;margin:auto">
@@ -13,7 +15,7 @@ export function verifyEmailTemplate(data: { token: string; name: string }): { su
 }
 
 export function resetPasswordTemplate(data: { token: string; name: string }): { subject: string; html: string } {
-  const url = "http://localhost:3000/auth/reset-password?token=" + encodeURIComponent(data.token);
+  const url = getEnv().FRONTEND_URL + "/auth/reset-password?token=" + encodeURIComponent(data.token);
   return {
     subject: "Ayo-SNBT — Reset Kata Sandi",
     html: `<!doctype html><html><body style="font-family:sans-serif;max-width:560px;margin:auto">

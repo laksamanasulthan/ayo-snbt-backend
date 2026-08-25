@@ -20,6 +20,8 @@ export interface SuccessEnvelope<T> {
     requestId: string;
     timestamp: string;
     pagination?: PaginationMeta;
+    /** A7: leaderboard context (requester's rank within the filtered set). */
+    leaderboard?: { personalRank: number | null };
   };
 }
 
@@ -38,6 +40,7 @@ export type Envelope<T> = SuccessEnvelope<T> | ErrorEnvelope;
 
 export interface ReplyMeta {
   pagination?: PaginationMeta;
+  leaderboard?: { personalRank: number | null };
 }
 
 /** Attach envelope helpers to FastifyReply: reply.ok(data, meta), etc. */
@@ -47,7 +50,8 @@ export function buildReplyHelpers(reply: FastifyReply) {
   const meta = (extra?: ReplyMeta): SuccessEnvelope<unknown>["meta"] => ({
     requestId,
     timestamp: new Date().toISOString(),
-    ...(extra?.pagination ? { pagination: extra.pagination } : {})
+    ...(extra?.pagination ? { pagination: extra.pagination } : {}),
+    ...(extra?.leaderboard ? { leaderboard: extra.leaderboard } : {})
   });
 
   return {

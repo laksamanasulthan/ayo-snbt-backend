@@ -34,7 +34,16 @@ import { iamModule } from "./modules/iam/index.js";
 import { coursesModule } from "./modules/courses/index.js";
 import { videoModule } from "./modules/video/index.js";
 import { questionsModule } from "./modules/questions/index.js";
-import { simulationsModule } from "./modules/simulations/index.js";
+import { simulationsModule, practiceModule } from "./modules/simulations/index.js";
+import { notificationsModule } from "./modules/notifications/index.js";
+import { adminModule } from "./modules/admin/index.js";
+import { qaModule } from "./modules/qa/index.js";
+import { pathsModule } from "./modules/paths/index.js";
+import { resultsModule } from "./modules/results/index.js";
+import { challengesModule } from "./modules/challenges/index.js";
+import { notesModule } from "./modules/notes/index.js";
+import { certificatesModule } from "./modules/certificates/index.js";
+import { gamificationModule } from "./modules/gamification/index.js";
 import { chatModule } from "./modules/chat/index.js";
 import { paymentsModule } from "./modules/payments/index.js";
 
@@ -270,6 +279,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(videoModule);
   await app.register(questionsModule);
   await app.register(simulationsModule);
+  await app.register(practiceModule);
+  await app.register(notificationsModule);
+  await app.register(adminModule);
+  await app.register(qaModule);
+  await app.register(pathsModule);
+  await app.register(resultsModule);
+  await app.register(challengesModule);
+  await app.register(notesModule);
+  await app.register(certificatesModule);
+  await app.register(gamificationModule);
   await app.register(chatModule);
   await app.register(paymentsModule);
 

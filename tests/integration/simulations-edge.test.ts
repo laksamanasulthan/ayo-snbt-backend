@@ -348,4 +348,135 @@ describe("Simulations edge cases", () => {
     const res = await app.inject({ method: "DELETE", url: "/api/v1/simulations/packages/" + packageId, headers: authHeaders(studentToken) });
     expect(res.statusCode).toBe(403);
   });
+  // ── Review / Pembahasan ──────────────────────────────────────────────
+  it("rejects review before grading (NOT_GRADED)", async () => {
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    await app.inject({ method: "POST", url: "/api/v1/simulations/sessions/" + freshId + "/submit", headers: authHeaders(studentToken) });
+    const res = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId + "/review", headers: authHeaders(studentToken) });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("NOT_GRADED");
+  });
+
+  it("returns full review payload after grading", async () => {
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    const session = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    const questions = session.json().data.questions as { id: string; options: { id: string }[] }[];
+    // Answer the first question correctly (find the correct option by checking the review later)
+    // Since the session has 2 questions, answer both with the first option of each
+    for (const q of questions) {
+      await app.inject({
+        method: "POST", url: "/api/v1/simulations/sessions/" + freshId + "/answers", headers: authHeaders(studentToken),
+        payload: { questionId: q.id, selectedOptionId: q.options[0]!.id }
+      });
+    }
+    await app.inject({ method: "POST", url: "/api/v1/simulations/sessions/" + freshId + "/submit", headers: authHeaders(studentToken) });
+    await simulationsService.gradeSession(freshId);
+    const review = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId + "/review", headers: authHeaders(studentToken) });
+    expect(review.statusCode).toBe(200);
+    const data = review.json().data;
+    expect(data.sessionId).toBe(freshId);
+    expect(data.packageId).toBe(packageId);
+    expect(data.questions.length).toBe(2);
+    for (const q of data.questions) {
+      expect(q.correctOptionIds).toBeDefined();
+      expect(q.correctOptionIds.length).toBeGreaterThanOrEqual(1);
+      expect(typeof q.isCorrect).toBe("boolean");
+      expect(q.options.some((o: { isCorrect: boolean }) => o.isCorrect)).toBe(true);
+      // Options include the correct flag (review-only; session endpoint never shows it)
+      const correctOpts = q.options.filter((o: { isCorrect: boolean }) => o.isCorrect);
+      expect(correctOpts.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("other user's session returns 404", async () => {
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    await app.inject({ method: "POST", url: "/api/v1/simulations/sessions/" + freshId + "/submit", headers: authHeaders(studentToken) });
+    await simulationsService.gradeSession(freshId);
+    const res = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId + "/review", headers: authHeaders(student2Token) });
+    expect(res.statusCode).toBe(404);
+  });
+
+
+  // ── M3: exam mechanics (flag, timeSpentMs, warnAt) ───────────────────
+  it("flags a question for review", async () => {
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    const session = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    const qId = session.json().data.questions[0]!.id as string;
+    const flag = await app.inject({
+      method: "PATCH", url: "/api/v1/simulations/sessions/" + freshId + "/answers/" + qId + "/flag", headers: authHeaders(studentToken),
+      payload: { isFlagged: true }
+    });
+    expect(flag.statusCode).toBe(200);
+    expect(flag.json().data.flagged).toBe(true);
+    const after = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    expect(after.json().data.questions[0]!.flagged).toBe(true);
+    // Unflag
+    const unflag = await app.inject({
+      method: "PATCH", url: "/api/v1/simulations/sessions/" + freshId + "/answers/" + qId + "/flag", headers: authHeaders(studentToken),
+      payload: { isFlagged: false }
+    });
+    expect(unflag.json().data.flagged).toBe(false);
+  });
+
+  it("rejects flagging after submission", async () => {
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    const session = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    const qId = session.json().data.questions[0]!.id as string;
+    await app.inject({ method: "POST", url: "/api/v1/simulations/sessions/" + freshId + "/submit", headers: authHeaders(studentToken) });
+    const flag = await app.inject({
+      method: "PATCH", url: "/api/v1/simulations/sessions/" + freshId + "/answers/" + qId + "/flag", headers: authHeaders(studentToken),
+      payload: { isFlagged: true }
+    });
+    expect(flag.statusCode).toBe(400);
+    expect(flag.json().error.code).toBe("SESSION_CLOSED");
+  });
+
+  it("tracks time spent per question on save", async () => {
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    const session = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    const q = session.json().data.questions[0] as { id: string; options: { id: string }[] };
+    await new Promise(r => setTimeout(r, 50));
+    const save = await app.inject({
+      method: "POST", url: "/api/v1/simulations/sessions/" + freshId + "/answers", headers: authHeaders(studentToken),
+      payload: { questionId: q.id, selectedOptionId: q.options[0]!.id }
+    });
+    expect(save.statusCode).toBe(200);
+    expect(save.json().data.timeSpentMs).toBeGreaterThanOrEqual(0);
+    const after = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    const qAfter = after.json().data.questions[0] as { timeSpentMs: number };
+    expect(qAfter.timeSpentMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("includes warnAtRemainingMs when the package configures it", async () => {
+    const db = getPool();
+    await db.query("UPDATE simulation_packages SET warn_at_remaining_ms = 300000 WHERE id = $1", [packageId]);
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    const session = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    expect(session.json().data.warnAtRemainingMs).toBe(300000);
+    await db.query("UPDATE simulation_packages SET warn_at_remaining_ms = NULL WHERE id = $1", [packageId]);
+  });
+
+  it("session endpoint still does NOT leak answers before grading", async () => {
+    const freshId = (await app.inject({
+      method: "POST", url: "/api/v1/simulations/" + packageId + "/start", headers: authHeaders(studentToken)
+    }).then(r => r.json().data.sessionId)) as string;
+    const session = await app.inject({ method: "GET", url: "/api/v1/simulations/sessions/" + freshId, headers: authHeaders(studentToken) });
+    const q = session.json().data.questions[0] as { options: { isCorrect?: boolean }[] };
+    expect(q!.options[0]!.isCorrect).toBeUndefined();
+  });
+
 });

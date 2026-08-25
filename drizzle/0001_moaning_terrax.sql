@@ -1,0 +1,1 @@
+ALTER TABLE "simulation_sessions" ADD COLUMN "type" varchar(20) DEFAULT 'simulation' NOT NULL;

@@ -12,6 +12,7 @@ import { ConflictError, NotFoundError, UnauthorizedError, BadRequestError, Forbi
 import { QueueName, enqueue } from "../../shared/queue/queues.js";
 import { loginLockout } from "../../shared/auth/index.js";
 import { getEnv } from "../../config/index.js";
+import { eventBus } from "../../shared/events/bus.js";
 import type { AccessTokenPayload } from "../../shared/auth/index.js";
 
 export interface AuthResult {
@@ -112,6 +113,8 @@ export const authService = {
       template: "verify-email",
       data: { token, name: input.name }
     });
+    // A9: analytics
+    eventBus.emit("user.registered", { userId: user.id });
     return { userId: user.id };
   },
 
@@ -129,6 +132,8 @@ export const authService = {
     if (item.expiresAt < new Date()) throw new BadRequestError("Verification token expired");
     await db.update(emailVerifications).set({ usedAt: new Date() }).where(eq(emailVerifications.id, item.id));
     await db.update(users).set({ emailVerifiedAt: new Date(), status: "active" }).where(eq(users.id, item.userId));
+    // A9: analytics
+    eventBus.emit("user.email_verified", { userId: item.userId });
   },
 
   /** Login with email + password (lockout + exponential backoff windows). */
@@ -142,6 +147,8 @@ export const authService = {
     const valid = await verifyPassword(input.password, hash).catch(() => false);
     if (!user || !valid) throw new UnauthorizedError("Invalid email or password", "AUTH_INVALID_CREDENTIALS");
     if (user.status === "pending" || !user.emailVerifiedAt) throw new ForbiddenError("Email not verified", "EMAIL_NOT_VERIFIED");
+    // M9: suspended accounts are blocked at the door (after credential check)
+    if (user.status === "suspended") throw new ForbiddenError("Account suspended", "ACCOUNT_SUSPENDED");
     await loginLockout.clear(input.email, meta.ip);
     return buildAuthResult({ id: user.id, email: user.email, name: user.name }, meta);
   },
@@ -166,6 +173,7 @@ export const authService = {
     const userRow = await userRepo.findActiveById(token.userId);
     const user = userRow[0];
     if (!user) throw new UnauthorizedError("User not found");
+    if (user.status === "suspended") throw new ForbiddenError("Account suspended", "ACCOUNT_SUSPENDED");
     // Rotate: revoke old, issue new in the same family.
     // Conditional update (revokedAt IS NULL) makes rotation atomic: when two
     // requests present the SAME token concurrently, only one wins the update

@@ -7,16 +7,71 @@ export async function paymentsModule(app: FastifyInstance): Promise<void> {
   await app.addHook("preHandler", csrfGuard);
 
   // ── Orders (student) ────────────────────────────────────────────────
+  // A8: one of courseId | bundleId, optional couponCode
   app.post("/api/v1/payments/orders", {
     preHandler: [authGuard, requirePermission(Permissions.PAYMENT_READ)],
     schema: {
-      body: { type: "object", required: ["courseId"], properties: { courseId: { type: "string" } } }
+      body: {
+        type: "object",
+        properties: { courseId: { type: "string" }, bundleId: { type: "string" }, couponCode: { type: "string" } }
+      }
     },
     config: { rateLimit: { max: 10, timeWindow: 60_000 } }
   }, async (request, reply) => {
-    const { courseId } = request.body as { courseId: string };
-    const result = await paymentsService.createOrder(getUser(request).id, courseId);
+    const body = request.body as { courseId?: string; bundleId?: string; couponCode?: string };
+    const result = await paymentsService.createOrder(getUser(request).id, body);
     return reply.created(result);
+  });
+
+  // ── A8: coupons & bundles (mentor/admin) ────────────────────────────
+  app.get("/api/v1/payments/coupons", { preHandler: [authGuard, requirePermission(Permissions.COURSE_UPDATE)] }, async (_request, reply) => {
+    const rows = await paymentsService.listCoupons();
+    return reply.ok(rows);
+  });
+
+  app.post("/api/v1/payments/coupons", {
+    preHandler: [authGuard, requirePermission(Permissions.COURSE_UPDATE)],
+    schema: {
+      body: { type: "object", required: ["code", "percentOff"], properties: { code: { type: "string" }, percentOff: { type: "integer" }, maxUses: { type: ["integer", "null"] }, courseId: { type: ["string", "null"] }, expiresAt: { type: ["string", "null"] } } }
+    }
+  }, async (request, reply) => {
+    const body = request.body as { code: string; percentOff: number; maxUses?: number | null; courseId?: string | null; expiresAt?: string | null };
+    const coupon = await paymentsService.createCoupon(getUser(request), body);
+    return reply.created(coupon);
+  });
+
+  app.get("/api/v1/payments/bundles", async (_request, reply) => {
+    const rows = await paymentsService.listBundles();
+    return reply.ok(rows);
+  });
+
+  app.get("/api/v1/payments/bundles/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const bundle = await paymentsService.getBundle(id);
+    return reply.ok(bundle);
+  });
+
+  app.post("/api/v1/payments/bundles", {
+    preHandler: [authGuard, requirePermission(Permissions.COURSE_UPDATE)],
+    schema: {
+      body: { type: "object", required: ["title", "priceCents", "courseIds"], properties: { title: { type: "string" }, description: { type: "string" }, priceCents: { type: "integer" }, courseIds: { type: "array", items: { type: "string" } } } }
+    }
+  }, async (request, reply) => {
+    const body = request.body as { title: string; description?: string; priceCents: number; courseIds: string[] };
+    const bundle = await paymentsService.createBundle(getUser(request), body);
+    return reply.created(bundle);
+  });
+
+  app.patch("/api/v1/payments/bundles/:id", {
+    preHandler: [authGuard, requirePermission(Permissions.COURSE_UPDATE)],
+    schema: {
+      body: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, priceCents: { type: "integer" }, status: { type: "string" }, courseIds: { type: "array", items: { type: "string" } } } }
+    }
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { title?: string; description?: string; priceCents?: number; status?: string; courseIds?: string[] };
+    const bundle = await paymentsService.updateBundle(getUser(request), id, body);
+    return reply.ok(bundle);
   });
 
   app.get("/api/v1/payments/orders", { preHandler: [authGuard] }, async (request, reply) => {

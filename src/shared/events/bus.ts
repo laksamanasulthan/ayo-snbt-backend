@@ -8,12 +8,18 @@ export interface DomainEventMap {
   "course.deleted": { courseId: string };
   "course.restored": { courseId: string };
   "question.updated": { questionId: string };
+  "question.created": { questionId: string };
   "question.deleted": { questionId: string };
   "simulation_package.updated": { packageId: string };
   "simulation_package.deleted": { packageId: string };
   "order.fulfilled": { orderId: string; userId: string; courseId?: string | null };
   "user.password_reset": { userId: string };
   "leaderboard.changed": { packageId: string };
+  "simulation.graded": { sessionId: string; packageId: string; userId: string };
+  "user.registered": { userId: string };
+  "user.email_verified": { userId: string };
+  "simulation.started": { sessionId: string; userId: string; type: string };
+  "results.viewed": { sessionId: string; userId: string };
 }
 
 export type DomainEventName = keyof DomainEventMap;

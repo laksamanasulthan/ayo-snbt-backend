@@ -46,4 +46,22 @@ export async function usersModule(app: FastifyInstance): Promise<void> {
     await usersService.updateAvatarUrl(getUser(request).id, key);
     return reply.ok({ updated: true });
   });
+
+  // ── A7: social graph ─────────────────────────────────────────────────
+  app.get("/api/v1/users/me/following", { preHandler: [authGuard] }, async (request, reply) => {
+    const rows = await usersService.listFollowing(getUser(request).id);
+    return reply.ok(rows);
+  });
+
+  app.post("/api/v1/users/:id/follow", { preHandler: [authGuard] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await usersService.follow(getUser(request).id, id);
+    return reply.ok(result);
+  });
+
+  app.delete("/api/v1/users/:id/follow", { preHandler: [authGuard] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await usersService.unfollow(getUser(request).id, id);
+    return reply.ok(result);
+  });
 }

@@ -1,8 +1,8 @@
 # Contributing to Ayo-SNBT Backend
 
 Thanks for contributing! This guide keeps the codebase maintainable as the team
-grows. Please read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
-[docs/API-CONVENTIONS.md](docs/API-CONVENTIONS.md) before starting.
+grows. Please read [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) and
+[docs/architecture/API-CONVENTIONS.md](docs/architecture/API-CONVENTIONS.md) before starting.
 
 ## Slice anatomy
 
@@ -20,7 +20,7 @@ src/modules/courses/
 
 Tests live in `tests/unit` (pure logic) and `tests/integration` (compose
 stack). New slices add an `*-edge.test.ts` suite — see
-[docs/TESTING.md](docs/TESTING.md).
+[docs/guides/TESTING.md](docs/guides/TESTING.md).
 
 ## Conventions (the 8 rules)
 
@@ -31,7 +31,7 @@ stack). New slices add an `*-edge.test.ts` suite — see
    `reply.created(data)`, `reply.accepted(data)` — never raw `send`.
 3. **Throw typed errors with codes.** `BadRequestError("...", "CODE")` from
    `shared/http/errors.ts`; add new codes to the catalog in
-   [docs/API-CONVENTIONS.md](docs/API-CONVENTIONS.md).
+   [docs/architecture/API-CONVENTIONS.md](docs/architecture/API-CONVENTIONS.md).
 4. **All DB reads through the slice repository.** Repositories apply
    `notDeleted()` filters — direct `getDb()` queries in services must apply
    the same filters manually.
@@ -45,7 +45,7 @@ stack). New slices add an `*-edge.test.ts` suite — see
    automatically).
 8. **Tests with every change.** Unit tests for pure logic, integration tests
    for flows; edge-case suites cover normal AND failure paths
-   ([docs/TESTING.md](docs/TESTING.md)).
+   ([docs/guides/TESTING.md](docs/guides/TESTING.md)).
 
 ## PR checklist
 
@@ -71,7 +71,7 @@ npm run dev            # API (tsx watch)
 npm run dev:worker     # BullMQ worker (tsx watch)
 ```
 
-Gotchas (full list in [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)):
+Gotchas (full list in [docs/guides/GETTING-STARTED.md](docs/guides/GETTING-STARTED.md)):
 
 - `.npmrc` sets `ignore-scripts=true` — after `npm install`, run
   `node node_modules/ffmpeg-static/install.js` once.
@@ -92,4 +92,4 @@ Gotchas (full list in [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)):
 - Reviewers verify the 8 conventions and the PR checklist, not just behavior.
 - Large slices are reviewed in vertical order (routes → service → repository).
 - Security-sensitive changes (auth, payments, webhooks, CSRF, rate limits)
-  get an extra reviewer pass per [docs/SECURITY.md](docs/SECURITY.md).
+  get an extra reviewer pass per [docs/architecture/SECURITY.md](docs/architecture/SECURITY.md).

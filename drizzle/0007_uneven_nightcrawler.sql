@@ -1,0 +1,2 @@
+ALTER TABLE "questions" ADD COLUMN "content_hash" varchar(64);--> statement-breakpoint
+CREATE UNIQUE INDEX "question_content_hash_uq" ON "questions" USING btree ("content_hash") WHERE deleted_at IS NULL;

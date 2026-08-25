@@ -21,6 +21,11 @@ const ALL_TABLES = [
   "orders", "payment_events",
   "audit_logs", "refresh_tokens", "email_verifications", "password_resets",
   "user_identities", "user_roles", "users",
+  "notifications", "tags", "question_tags", "follows",
+  "coupons", "bundles", "bundle_courses",
+  "analytics_events", "daily_challenges", "question_notes",
+  "certificates", "wishlist",
+  "points_events", "badges", "user_badges",
 ];
 
 /** Truncate the PostgreSQL tables used by tests (RESTART IDENTITY, CASCADE). */
@@ -216,15 +221,17 @@ export interface DbPackageOpts {
   scoring?: { correct: number; blank: number; wrong: number };
   createdBy?: string | null;
   deletedAt?: string | null;
+  maxAttempts?: number | null;
+  retakeCooldownMinutes?: number | null;
 }
 
 /** Insert a simulation package directly in the DB. */
 export async function insertPackage(opts: DbPackageOpts = {}): Promise<string> {
   const db = getPool();
   const rows = await db.query(
-    `INSERT INTO simulation_packages (title, status, duration_minutes, question_counts, scoring, created_by, deleted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-    [opts.title ?? "Paket Try Out", opts.status ?? "draft", opts.durationMinutes ?? 30, JSON.stringify(opts.questionCounts ?? { TPS: 2 }), JSON.stringify(opts.scoring ?? { correct: 4, blank: 0, wrong: 0 }), opts.createdBy ?? null, opts.deletedAt ?? null]
+    `INSERT INTO simulation_packages (title, status, duration_minutes, question_counts, scoring, created_by, deleted_at, max_attempts, retake_cooldown_minutes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+    [opts.title ?? "Paket Try Out", opts.status ?? "draft", opts.durationMinutes ?? 30, JSON.stringify(opts.questionCounts ?? { TPS: 2 }), JSON.stringify(opts.scoring ?? { correct: 4, blank: 0, wrong: 0 }), opts.createdBy ?? null, opts.deletedAt ?? null, opts.maxAttempts ?? null, opts.retakeCooldownMinutes ?? null]
   );
   return rows.rows[0]?.id as string;
 }

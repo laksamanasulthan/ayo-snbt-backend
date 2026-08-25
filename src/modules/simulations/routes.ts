@@ -15,6 +15,14 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
     return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
   });
 
+  // A1: scheduled tryout listings (public)
+  app.get("/api/v1/simulations/tryouts", async (request, reply) => {
+    const q = request.query as { cursor?: string; limit?: unknown };
+    const limit = Number(q.limit ?? 20);
+    const result = await simulationsService.listTryouts({ cursor: q.cursor, limit });
+    return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
+  });
+
   app.get("/api/v1/simulations/packages/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const pkg = await simulationsService.getPackage(id);
@@ -24,7 +32,7 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
   app.post("/api/v1/simulations/packages", {
     preHandler: manageGuard,
     schema: {
-      body: { type: "object", required: ["title"], properties: { title: { type: "string" }, durationMinutes: { type: "integer" }, description: { type: "string" }, questionCounts: { type: "object" }, scoring: { type: "object" } } }
+      body: { type: "object", required: ["title"], properties: { title: { type: "string" }, durationMinutes: { type: "integer" }, description: { type: "string" }, questionCounts: { type: "object" }, scoring: { type: "object" }, maxAttempts: { type: ["integer", "null"], minimum: 1 }, retakeCooldownMinutes: { type: ["integer", "null"], minimum: 0 }, scheduledAt: { type: ["string", "null"] }, closesAt: { type: ["string", "null"] } } }
     }
   }, async (request, reply) => {
     const body = request.body as Record<string, unknown>;
@@ -94,6 +102,20 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
     return reply.ok(result);
   });
 
+  // ── Flag for review (M3) ─────────────────────────────────────────────
+  app.patch("/api/v1/simulations/sessions/:id/answers/:questionId/flag", {
+    preHandler: [authGuard],
+    schema: {
+      params: { type: "object", required: ["id", "questionId"], properties: { id: { type: "string" }, questionId: { type: "string" } } },
+      body: { type: "object", required: ["isFlagged"], properties: { isFlagged: { type: "boolean" } } }
+    }
+  }, async (request, reply) => {
+    const { id, questionId } = request.params as { id: string; questionId: string };
+    const { isFlagged } = request.body as { isFlagged: boolean };
+    const result = await simulationsService.flagAnswer(getUser(request).id, id, questionId, isFlagged);
+    return reply.ok(result);
+  });
+
   app.post("/api/v1/simulations/sessions/:id/submit", {
     preHandler: [authGuard],
     config: { rateLimit: { max: 5, timeWindow: 60_000 } }
@@ -109,11 +131,28 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
     return reply.ok(result);
   });
 
+  // ── Review (pembahasan after grading) ───────────────────────────────
+  app.get("/api/v1/simulations/sessions/:id/review", { preHandler: [authGuard] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await simulationsService.getReview(getUser(request).id, id);
+    return reply.ok(result);
+  });
+
   // ── Leaderboard ──────────────────────────────────────────────────────
+  // A7: ?period=week|month|all, ?friends=true (my follows), personalRank in meta
   app.get("/api/v1/simulations/leaderboard", { preHandler: [optionalAuth] }, async (request, reply) => {
-    const q = (request.query ?? {}) as { packageId: string; limit?: unknown };
+    const q = (request.query ?? {}) as { packageId: string; limit?: unknown; period?: string; friends?: string };
     const limit = Number(q.limit ?? 20);
-    const rows = await simulationsService.getLeaderboard(q.packageId, limit);
-    return reply.ok(rows);
+    const period = q.period === "week" || q.period === "month" ? q.period : "all";
+    let friendIds: string[] | undefined;
+    let userId: string | undefined;
+    if (request.user) {
+      userId = request.user.id;
+      if (q.friends === "true") {
+        friendIds = await simulationsService.listFollowingIds(request.user.id);
+      }
+    }
+    const result = await simulationsService.getLeaderboard(q.packageId, limit, { period, friendIds, userId });
+    return reply.ok(result.rows, { leaderboard: { personalRank: result.personalRank } });
   });
 }

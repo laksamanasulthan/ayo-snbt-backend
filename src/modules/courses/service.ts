@@ -1,10 +1,10 @@
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import { getDb, getReadDb } from "../../shared/db/client.js";
 import { courseRepo } from "./repository.js";
 import { notDeleted } from "../../shared/db/filters.js";
 import { audit } from "../../shared/audit/audit.js";
-import { courses, lessons, courseEnrollments, lessonProgress, videos, users } from "../../shared/db/schema/index.js";
-import { NotFoundError, ConflictError, ForbiddenError } from "../../shared/http/errors.js";
+import { courses, lessons, courseEnrollments, lessonProgress, videos, users, wishlist } from "../../shared/db/schema/index.js";
+import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from "../../shared/http/errors.js";
 
 import { getCache } from "../../shared/cache/cache.js";
 import { cacheVersion, bumpCacheVersion } from "../../shared/cache/version.js";
@@ -24,7 +24,7 @@ export interface CourseInput {
 
 export const coursesService = {
   /** Cursor-paginated catalog: stable (createdAt DESC, id DESC) keyset. */
-  async list(input: { cursor?: string; limit: number; status?: string }): Promise<PageResult<unknown>> {
+  async list(input: { cursor?: string; limit: number; status?: string; userId?: string }): Promise<PageResult<unknown>> {
     const db = getReadDb(); // catalog reads hit the replica when configured
     const { limit } = input;
     const status = input.status ?? "published";
@@ -59,14 +59,23 @@ export const coursesService = {
         .limit(limit);
       return buildPage(rows, limit, ["createdAt", "id"]);
     };
-    const cached = await getCache()
+    const page = (await getCache()
       .get<PageResult<unknown> | null>(cacheKey, runQuery, 30_000)
-      .catch(() => null);
-    if (cached) return cached;
-    return runQuery();
+      .catch(() => null)) ?? (await runQuery());
+    // M8: per-user enrollment flag — never cached (user-specific)
+    if (input.userId && page.rows.length > 0) {
+      const ids = page.rows.map((r) => (r as { id: string }).id);
+      const enr = await getDb()
+        .select({ courseId: courseEnrollments.courseId })
+        .from(courseEnrollments)
+        .where(and(eq(courseEnrollments.userId, input.userId), eq(courseEnrollments.status, "active"), inArray(courseEnrollments.courseId, ids)));
+      const enrolledSet = new Set(enr.map((e) => e.courseId));
+      page.rows = page.rows.map((r) => ({ ...(r as Record<string, unknown>), enrolled: enrolledSet.has((r as { id: string }).id) }));
+    }
+    return page;
   },
 
-  async getById(id: string) {
+  async getById(id: string, userId?: string) {
     const row = await courseRepo.findById(id);
     const found = row[0];
     if (!found) throw new NotFoundError("Course not found");
@@ -77,7 +86,116 @@ export const coursesService = {
       .leftJoin(videos, eq(videos.id, lessons.videoId))
       .where(and(eq(lessons.courseId, id), notDeleted(lessons.deletedAt)))
       .orderBy(lessons.sortOrder);
-    return { ...found, lessons: lessonRows };
+    // M8: enrollment flag for the viewer
+    let enrolled = false;
+    if (userId) {
+      const enr = await db
+        .select({ id: courseEnrollments.id })
+        .from(courseEnrollments)
+        .where(and(eq(courseEnrollments.userId, userId), eq(courseEnrollments.courseId, id), eq(courseEnrollments.status, "active")))
+        .limit(1);
+      enrolled = enr.length > 0;
+    }
+    return { ...found, lessons: lessonRows, enrolled };
+  },
+
+  /** N8: add to my wishlist (idempotent). */
+  async addWishlist(userId: string, courseId: string) {
+    const db = getDb();
+    const c = (await db.select({ id: courses.id, status: courses.status }).from(courses).where(and(eq(courses.id, courseId), notDeleted(courses.deletedAt))).limit(1))[0];
+    if (!c) throw new NotFoundError("Course not found");
+    if (c.status !== "published") throw new BadRequestError("Course not available");
+    await db.insert(wishlist).values({ userId, courseId }).onConflictDoNothing();
+    return { wishlisted: true };
+  },
+
+  /** N8: remove from my wishlist (idempotent). */
+  async removeWishlist(userId: string, courseId: string) {
+    await getDb().delete(wishlist).where(and(eq(wishlist.userId, userId), eq(wishlist.courseId, courseId)));
+    return { wishlisted: false };
+  },
+
+  /** N8: my wishlist with course details. */
+  async listWishlist(userId: string) {
+    const db = getDb();
+    const rows = await db
+      .select({ id: courses.id, title: courses.title, slug: courses.slug, priceCents: courses.priceCents, category: courses.category, imageKey: courses.imageKey, addedAt: wishlist.createdAt })
+      .from(wishlist)
+      .innerJoin(courses, eq(courses.id, wishlist.courseId))
+      .where(and(eq(wishlist.userId, userId), notDeleted(courses.deletedAt)))
+      .orderBy(desc(wishlist.createdAt));
+    return rows;
+  },
+
+  /** M8: my enrolled courses with progress rollup (enrolledAt DESC keyset). */
+  async listMine(userId: string, cursor: string | undefined, limit: number) {
+    const db = getDb();
+    const kc = decodeCursor(cursor);
+    const where = and(
+      eq(courseEnrollments.userId, userId),
+      eq(courseEnrollments.status, "active"),
+      notDeleted(courses.deletedAt),
+      kc
+        ? keysetCondition([
+            { name: "course_enrollments.enrolled_at", value: kc.enrolledAt as string, dir: "desc" },
+            { name: "course_enrollments.course_id", value: kc.courseId as string, dir: "desc" }
+          ])
+        : undefined
+    );
+    const rows = await db
+      .select({
+        courseId: courseEnrollments.courseId,
+        id: courses.id,
+        title: courses.title,
+        slug: courses.slug,
+        description: courses.description,
+        category: courses.category,
+        level: courses.level,
+        priceCents: courses.priceCents,
+        imageKey: courses.imageKey,
+        mentorName: users.name,
+        enrolledAt: courseEnrollments.enrolledAt,
+        expiresAt: courseEnrollments.expiresAt
+      })
+      .from(courseEnrollments)
+      .innerJoin(courses, eq(courses.id, courseEnrollments.courseId))
+      .leftJoin(users, eq(users.id, courses.mentorId))
+      .where(where)
+      .orderBy(desc(courseEnrollments.enrolledAt), desc(courseEnrollments.courseId))
+      .limit(limit);
+    // Progress rollup: lesson totals + completed counts (batched)
+    const courseIds = rows.map((r) => r.courseId);
+    const lessonCounts = new Map<string, number>();
+    const completedCounts = new Map<string, number>();
+    if (courseIds.length > 0) {
+      const lessonRows = await db
+        .select({ id: lessons.id, courseId: lessons.courseId })
+        .from(lessons)
+        .where(and(inArray(lessons.courseId, courseIds), notDeleted(lessons.deletedAt)));
+      for (const l of lessonRows) lessonCounts.set(l.courseId, (lessonCounts.get(l.courseId) ?? 0) + 1);
+      if (lessonRows.length > 0) {
+        const completed = await db
+          .select({ lessonId: lessonProgress.lessonId })
+          .from(lessonProgress)
+          .where(and(
+            eq(lessonProgress.userId, userId),
+            eq(lessonProgress.status, "completed"),
+            inArray(lessonProgress.lessonId, lessonRows.map((l) => l.id))
+          ));
+        const lessonCourse = new Map(lessonRows.map((l) => [l.id, l.courseId]));
+        for (const c of completed) {
+          const cid = lessonCourse.get(c.lessonId);
+          if (cid) completedCounts.set(cid, (completedCounts.get(cid) ?? 0) + 1);
+        }
+      }
+    }
+    const enriched = rows.map((r) => {
+      const totalLessons = lessonCounts.get(r.courseId) ?? 0;
+      const completedLessons = completedCounts.get(r.courseId) ?? 0;
+      const percentComplete = totalLessons === 0 ? 0 : Math.round((completedLessons / totalLessons) * 100);
+      return { ...r, completedLessons, totalLessons, percentComplete };
+    });
+    return buildPage(enriched, limit, ["enrolledAt", "courseId"]);
   },
 
   async create(userId: string, input: CourseInput) {

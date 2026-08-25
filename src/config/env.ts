@@ -72,7 +72,12 @@ const envSchema = z.object({
   OAUTH_FRONTEND_REDIRECT_URL: z.string().default("http://localhost:5173"),
 
   // API docs
-  DOCS_ENABLED: boolFromEnv.default(true),
+DOCS_ENABLED: boolFromEnv.default(true),
+
+  // Frontend base URL — used in email templates (verify/reset links).
+  // Dev default matches the Vite dev server; production must point at the
+  // real frontend origin.
+  FRONTEND_URL: z.string().min(1).default("http://localhost:5173"),
 
   // Rate limiting defaults
   RATE_LIMIT_GLOBAL_MAX: z.coerce.number().int().positive().default(100),

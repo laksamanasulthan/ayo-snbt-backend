@@ -18,13 +18,39 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const q = request.query as { cursor?: string; limit?: unknown };
     const limit = parseLimit(q.limit, 20);
-    const result = await coursesService.list({ cursor: q.cursor, limit });
+    const result = await coursesService.list({ cursor: q.cursor, limit, userId: request.user?.id });
+    return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
+  });
+
+  // N8: wishlist (registered before /:id)
+  app.get("/api/v1/courses/wishlist", { preHandler: [authGuard] }, async (request, reply) => {
+    const rows = await coursesService.listWishlist(getUser(request).id);
+    return reply.ok(rows);
+  });
+
+  app.post("/api/v1/courses/:id/wishlist", { preHandler: [authGuard] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await coursesService.addWishlist(getUser(request).id, id);
+    return reply.ok(result);
+  });
+
+  app.delete("/api/v1/courses/:id/wishlist", { preHandler: [authGuard] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await coursesService.removeWishlist(getUser(request).id, id);
+    return reply.ok(result);
+  });
+
+  // M8: my enrolled courses with progress rollup (registered before /:id)
+  app.get("/api/v1/courses/mine", { preHandler: [authGuard] }, async (request, reply) => {
+    const q = request.query as { cursor?: string; limit?: unknown };
+    const limit = parseLimit(q.limit, 20);
+    const result = await coursesService.listMine(getUser(request).id, q.cursor, limit);
     return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
   });
 
   app.get("/api/v1/courses/:id", { preHandler: [optionalAuth] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const course = await coursesService.getById(id);
+    const course = await coursesService.getById(id, request.user?.id);
     // TS narrows: getById throws on missing, so course is defined here
     // Only published courses are visible publicly
     if (course.status !== "published") {

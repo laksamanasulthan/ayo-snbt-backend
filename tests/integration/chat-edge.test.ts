@@ -286,4 +286,15 @@ describe("Chat edge cases (WS + MongoDB)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().data.length).toBeLessThanOrEqual(100);
   });
+
+  it("has a TTL index on chat_messages.createdAt (I1 retention)", async () => {
+    const db = getChatDb();
+    const indexes = await db.collection("chat_messages").indexes();
+    const ttl = indexes.find((i: Record<string, unknown>) => {
+      const key = i.key as Record<string, number> | undefined;
+      return key?.createdAt === 1 && typeof i.expireAfterSeconds === "number";
+    });
+    expect(ttl).toBeTruthy();
+    expect(ttl!.expireAfterSeconds).toBeGreaterThan(0);
+  });
 });

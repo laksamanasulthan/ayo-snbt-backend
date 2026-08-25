@@ -1,0 +1,1 @@
+ALTER TABLE "simulation_sessions" ALTER COLUMN "package_id" DROP NOT NULL;
