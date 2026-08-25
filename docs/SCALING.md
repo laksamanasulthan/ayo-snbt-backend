@@ -2,15 +2,15 @@
 
 ## Architecture levers (in order of impact)
 
-| # | Lever | Impact | Status |
-| --- | --- | --- | --- |
-| 1 | **Stateless replicas behind HAProxy** | Linear scale-out; the single biggest lever | ✅ built |
-| 2 | **CDN offload** (static assets, HLS segments, images) | 60–80% of media/catalog traffic never reaches the API | ✅ presigned URLs; CDN config at deploy |
-| 3 | **Layered caching** (CDN → HAProxy cache → in-memory LRU → Redis) | 90%+ read hit rate on catalog/leaderboard | ✅ Redis cache-aside + single-flight |
-| 4 | **Async offload via BullMQ** (emails, grading, transcode, fulfillment) | Requests return fast; heavy work queued | ✅ all queues live |
-| 5 | **Read replicas + PgBouncer tx-pooling** | Reads never compete with writes | ✅ replica plumbing (DATABASE_URL_REPLICA) |
-| 6 | **Zero-copy media** (presigned upload/stream) | API bandwidth ~0 for video | ✅ HLS redirect streaming |
-| 7 | **Edge + per-route rate limiting** | Survive traffic spikes/abuse | ✅ HAProxy global + app per-route |
+| #   | Lever                                                                  | Impact                                                | Status                                     |
+| --- | ---------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------ |
+| 1   | **Stateless replicas behind HAProxy**                                  | Linear scale-out; the single biggest lever            | ✅ built                                   |
+| 2   | **CDN offload** (static assets, HLS segments, images)                  | 60–80% of media/catalog traffic never reaches the API | ✅ presigned URLs; CDN config at deploy    |
+| 3   | **Layered caching** (CDN → HAProxy cache → in-memory LRU → Redis)      | 90%+ read hit rate on catalog/leaderboard             | ✅ Redis cache-aside + single-flight       |
+| 4   | **Async offload via BullMQ** (emails, grading, transcode, fulfillment) | Requests return fast; heavy work queued               | ✅ all queues live                         |
+| 5   | **Read replicas + PgBouncer tx-pooling**                               | Reads never compete with writes                       | ✅ replica plumbing (DATABASE_URL_REPLICA) |
+| 6   | **Zero-copy media** (presigned upload/stream)                          | API bandwidth ~0 for video                            | ✅ HLS redirect streaming                  |
+| 7   | **Edge + per-route rate limiting**                                     | Survive traffic spikes/abuse                          | ✅ HAProxy global + app per-route          |
 
 ## Capacity math
 
@@ -46,12 +46,12 @@ replicas = 50_000 / 6_000 ≈ 9 → 10–12 replicas
 
 ## Latency SLOs
 
-| Endpoint class | p99 target |
-| --- | --- |
-| Cached reads (catalog, leaderboard) | < 100 ms |
-| Authenticated reads | < 200 ms |
-| Streaming redirects | < 150 ms |
-| Simulation submit (202 async) | < 250 ms |
+| Endpoint class                      | p99 target |
+| ----------------------------------- | ---------- |
+| Cached reads (catalog, leaderboard) | < 100 ms   |
+| Authenticated reads                 | < 200 ms   |
+| Streaming redirects                 | < 150 ms   |
+| Simulation submit (202 async)       | < 250 ms   |
 
 ## Readiness/degradation contract
 

@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { getDb } from "../../shared/db/client.js";
+import { userRepo } from "../users/repository.js";
 import {
   users, refreshTokens, emailVerifications, passwordResets, userIdentities, userRoles, roles, rolePermissions, permissions
 } from "../../shared/db/schema/index.js";
@@ -132,14 +133,9 @@ export const authService = {
 
   /** Login with email + password (lockout + exponential backoff windows). */
   async login(input: { email: string; password: string }, meta: { ip: string; userAgent?: string }): Promise<AuthResult> {
-    const db = getDb();
     const status = await loginLockout.recordFailed(input.email, meta.ip);
     if (status.locked) throw new UnauthorizedError("Too many failed attempts — account temporarily locked", "ACCOUNT_LOCKED");
-    const row = await db
-      .select({ id: users.id, email: users.email, name: users.name, passwordHash: users.passwordHash, emailVerifiedAt: users.emailVerifiedAt, status: users.status })
-      .from(users)
-      .where(eq(users.email, input.email))
-      .limit(1);
+    const row = await userRepo.findActiveByEmail(input.email);
     const user = row[0];
     // Constant-ish behavior: verify against a dummy hash when user not found
     const hash = user?.passwordHash ?? "$argon2id$v=19$m=19456,t=2,p=1$dummy";
@@ -167,11 +163,22 @@ export const authService = {
       throw new UnauthorizedError("Refresh token reuse detected — session family revoked", "TOKEN_REUSE_DETECTED");
     }
     if (token.expiresAt < new Date()) throw new UnauthorizedError("Refresh token expired", "TOKEN_EXPIRED");
-    const userRow = await db.select({ id: users.id, email: users.email, name: users.name }).from(users).where(eq(users.id, token.userId)).limit(1);
+    const userRow = await userRepo.findActiveById(token.userId);
     const user = userRow[0];
     if (!user) throw new UnauthorizedError("User not found");
-    // Rotate: revoke old, issue new in the same family
-    await db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.id, token.id));
+    // Rotate: revoke old, issue new in the same family.
+    // Conditional update (revokedAt IS NULL) makes rotation atomic: when two
+    // requests present the SAME token concurrently, only one wins the update
+    // and the loser is treated as reuse (family revoked).
+    const rotated = await db
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(refreshTokens.id, token.id), isNull(refreshTokens.revokedAt)))
+      .returning({ id: refreshTokens.id });
+    if (rotated.length === 0) {
+      await revokeFamily(token.familyId);
+      throw new UnauthorizedError("Refresh token reuse detected — session family revoked", "TOKEN_REUSE_DETECTED");
+    }
     const accessToken = await issueAccessToken(user.id, user.email);
     const refreshToken = await createRefreshToken(user.id, token.familyId, meta);
     const claims = await getUserClaims(user.id);

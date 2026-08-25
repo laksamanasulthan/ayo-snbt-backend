@@ -1,4 +1,5 @@
-import { getChatDb } from "../../shared/mongo/client.js";
+import { getChatDb, discardMongoClient } from "../../shared/mongo/client.js";
+import { getLogger } from "../../shared/logger.js";
 
 export const COLLECTIONS = {
   rooms: "chat_rooms",
@@ -29,20 +30,27 @@ export interface ChatMessageDoc {
   createdAt: Date;
 }
 
-/** Ensure collections + indexes (idempotent, called at module boot). */
+/**
+ * Ensure collections + indexes (idempotent, called at module boot).
+ * Resilient: when MongoDB is unreachable the app must still boot — chat
+ * features degrade at use time instead.
+ */
 export async function ensureChatIndexes(): Promise<void> {
-  const db = getChatDb();
-  const rooms = db.collection<ChatRoomDoc>(COLLECTIONS.rooms);
-  const messages = db.collection<ChatMessageDoc>(COLLECTIONS.messages);
-  await Promise.all([
-    // messages: paginate by (roomId, seq desc); unique seq per room
-    messages.createIndex({ roomId: 1, seq: -1 }),
-    messages.createIndex({ roomId: 1, seq: 1 }, { unique: true }),
-    // rooms: one chat per course (partial index on course rooms)
-    rooms.createIndex({ courseId: 1 }, { unique: true, partialFilterExpression: { type: "course" } }),
-    rooms.createIndex({ memberIds: 1 }),
-    rooms.createIndex({ lastMessageAt: -1 })
-  ]);
+  try {
+    const db = getChatDb();
+    const rooms = db.collection<ChatRoomDoc>(COLLECTIONS.rooms);
+    const messages = db.collection<ChatMessageDoc>(COLLECTIONS.messages);
+    await Promise.all([
+      messages.createIndex({ roomId: 1, seq: -1 }),
+      messages.createIndex({ roomId: 1, seq: 1 }, { unique: true }),
+      rooms.createIndex({ courseId: 1 }, { unique: true, partialFilterExpression: { type: "course" } }),
+      rooms.createIndex({ memberIds: 1 }),
+      rooms.createIndex({ lastMessageAt: -1 })
+    ]);
+  } catch (err) {
+    getLogger().warn({ err }, "chat indexes not created (MongoDB may be down)");
+    discardMongoClient();
+  }
 }
 
 /** Atomic per-room sequence allocation (server-side message ordering). */

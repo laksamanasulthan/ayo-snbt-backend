@@ -1,17 +1,21 @@
+import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, varchar, timestamp, jsonb, integer, boolean, doublePrecision, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 
 // ── Users ──────────────────────────────────────────────────────────────
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
-  email: varchar("email", { length: 255 }).notNull().unique(),
+  email: varchar("email", { length: 255 }).notNull(),
   passwordHash: text("password_hash"), // nullable for OAuth users
   name: varchar("name", { length: 255 }).notNull(),
   avatarUrl: text("avatar_url"),
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   status: varchar("status", { length: 20 }).notNull().default("active"),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
-});
+}, (table) => ({
+  emailIdx: uniqueIndex("users_email_unique").on(table.email).where(sql.raw("deleted_at IS NULL"))
+}));
 
 // ── Roles & Permissions (RBAC) ─────────────────────────────────────────
 export const userIdentities = pgTable("user_identities", {
@@ -106,16 +110,19 @@ export const courses = pgTable("courses", {
   id: uuid("id").primaryKey().defaultRandom(),
   mentorId: uuid("mentor_id").references(() => users.id, { onDelete: "set null" }),
   title: varchar("title", { length: 255 }).notNull(),
-  slug: varchar("slug", { length: 255 }).notNull().unique(),
+  slug: varchar("slug", { length: 255 }).notNull(),
   description: text("description"),
   category: varchar("category", { length: 100 }),
   level: varchar("level", { length: 20 }).notNull().default("all"),
   priceCents: integer("price_cents").notNull().default(0),
   status: varchar("status", { length: 20 }).notNull().default("draft"),
   imageKey: text("image_key"),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
-});
+}, (table) => ({
+  slugIdx: uniqueIndex("courses_slug_unique").on(table.slug).where(sql.raw("deleted_at IS NULL"))
+}));
 
 export const videos = pgTable("videos", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -127,6 +134,7 @@ export const videos = pgTable("videos", {
   durationSeconds: integer("duration_seconds"),
   posterKey: text("poster_key"),
   error: text("error"),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
@@ -140,6 +148,7 @@ export const lessons = pgTable("lessons", {
   videoId: uuid("video_id").references(() => videos.id, { onDelete: "set null" }),
   durationSeconds: integer("duration_seconds").notNull().default(0),
   isFree: boolean("is_free").notNull().default(false),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
@@ -179,6 +188,7 @@ export const questions = pgTable("questions", {
   imageKey: text("image_key"),
   sortOrder: integer("sort_order").notNull().default(0),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
@@ -204,6 +214,7 @@ export const simulationPackages = pgTable("simulation_packages", {
   scoring: jsonb("scoring").notNull().default({ correct: 4, blank: 0, wrong: 0 }),
   status: varchar("status", { length: 20 }).notNull().default("draft"),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
@@ -277,9 +288,17 @@ export const paymentEvents = pgTable("payment_events", {
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").primaryKey().defaultRandom(),
   actorId: uuid("actor_id"),
+  requestId: varchar("request_id", { length: 64 }),
+  ip: varchar("ip", { length: 45 }),
+  userAgent: text("user_agent"),
   action: varchar("action", { length: 100 }).notNull(),
   resourceType: varchar("resource_type", { length: 100 }),
   resourceId: varchar("resource_id", { length: 255 }),
+  before: jsonb("before"),
+  after: jsonb("after"),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
-});
+}, (table) => ({
+  auditResourceIdx: index("audit_resource_idx").on(table.resourceType, table.resourceId),
+  auditActorIdx: index("audit_actor_idx").on(table.actorId, table.createdAt)
+}));

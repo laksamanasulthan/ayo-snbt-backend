@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { verifyAccessToken, accessCookieName, csrfCookieName } from "../auth/index.js";
 import { AppError, ForbiddenError, UnauthorizedError } from "../http/errors.js";
 import { hasPermission, type Permission } from "../rbac/permissions.js";
+import { setContextActor } from "../context/request-context.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -33,6 +34,7 @@ export async function authGuard(request: FastifyRequest, _reply: FastifyReply): 
       roles: payload.roles,
       permissions: payload.permissions
     };
+    setContextActor(payload.sub);
   } catch {
     throw new UnauthorizedError("Invalid or expired access token", "TOKEN_EXPIRED");
   }
@@ -86,4 +88,10 @@ export async function csrfGuard(request: FastifyRequest, _reply: FastifyReply): 
   if (!cookie || !header || cookie !== header) {
     throw new AppError(403, "CSRF_TOKEN_MISMATCH", "CSRF token mismatch or missing");
   }
+}
+
+/** Get the authenticated user from the request, or throw UnauthorizedError. */
+export function getUser(request: FastifyRequest): { id: string; email: string; roles: string[]; permissions: string[] } {
+  if (!request.user) throw new UnauthorizedError("Authentication required");
+  return request.user;
 }

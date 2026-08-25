@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { authGuard, csrfGuard } from "../../shared/middleware/auth.js";
+import { authGuard, csrfGuard, getUser } from "../../shared/middleware/auth.js";
 import { usersService } from "./service.js";
 
 export async function usersModule(app: FastifyInstance): Promise<void> {
@@ -7,7 +7,7 @@ export async function usersModule(app: FastifyInstance): Promise<void> {
   await app.addHook("preHandler", csrfGuard);
   // ── Me (current user) ────────────────────────────────────────────────
   app.get("/api/v1/users/me", { preHandler: [authGuard] }, async (request, reply) => {
-    const user = await usersService.getProfile(request.user!.id);
+    const user = await usersService.getProfile(getUser(request).id);
     return reply.ok(user);
   });
 
@@ -19,7 +19,7 @@ export async function usersModule(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const body = request.body as { name?: string };
-    const user = await usersService.updateProfile(request.user!.id, body);
+    const user = await usersService.updateProfile(getUser(request).id, body);
     return reply.ok(user);
   });
 
@@ -31,7 +31,7 @@ export async function usersModule(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const { contentType } = request.body as { contentType: string };
-    const result = await usersService.presignAvatar(request.user!.id, contentType);
+    const result = await usersService.presignAvatar(getUser(request).id, contentType);
     return reply.ok(result);
   });
 
@@ -43,7 +43,7 @@ export async function usersModule(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const { key } = request.body as { key: string };
-    await usersService.updateAvatarUrl(request.user!.id, key);
+    await usersService.updateAvatarUrl(getUser(request).id, key);
     return reply.ok({ updated: true });
   });
 }

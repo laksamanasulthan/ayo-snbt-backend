@@ -4,19 +4,19 @@ Simulation-based SNBT (Seleksi Nasional Berdasarkan Tes) exam-prep platform back
 
 ## Tech Stack
 
-| Layer | Technology |
-| --- | --- |
-| API framework | Fastify 5 + TypeScript (strict) |
-| ORM / migrations | Drizzle ORM + drizzle-kit |
-| Database | PostgreSQL 18 behind **PgBouncer** (transaction pooling) |
-| Cache / queue | Redis 7 + **BullMQ 5** (exponential backoff) |
-| Chat | MongoDB (WebSocket gateway via @fastify/websocket) |
-| Object storage | S3-compatible (MinIO in dev, AWS/R2/Spaces in prod) |
-| Auth | Cookie-based JWT access + rotating refresh tokens, OAuth2 (Google) |
-| Docs | OpenAPI 3.0 + **Scalar** at /docs |
-| Email | Nodemailer (Mailpit in dev) |
-| Observability | pino + Prometheus + Grafana |
-| CI/CD | Jenkins + Docker (Trivy scan, SSH deploy) |
+| Layer            | Technology                                                         |
+| ---------------- | ------------------------------------------------------------------ |
+| API framework    | Fastify 5 + TypeScript (strict)                                    |
+| ORM / migrations | Drizzle ORM + drizzle-kit                                          |
+| Database         | PostgreSQL 18 behind **PgBouncer** (transaction pooling)           |
+| Cache / queue    | Redis 7 + **BullMQ 5** (exponential backoff)                       |
+| Chat             | MongoDB (WebSocket gateway via @fastify/websocket)                 |
+| Object storage   | S3-compatible (MinIO in dev, AWS/R2/Spaces in prod)                |
+| Auth             | Cookie-based JWT access + rotating refresh tokens, OAuth2 (Google) |
+| Docs             | OpenAPI 3.0 + **Scalar** at /docs                                  |
+| Email            | Nodemailer (Mailpit in dev)                                        |
+| Observability    | pino + Prometheus + Grafana                                        |
+| CI/CD            | Jenkins + Docker (Trivy scan, SSH deploy)                          |
 
 ## Architecture Highlights
 
@@ -52,20 +52,28 @@ npm run dev:worker           # tsx watch src/worker.ts
 npm test                     # vitest unit suite
 ```
 
+## Documentation
+
+Full documentation lives in [docs/](docs/README.md) — onboarding, architecture,
+API conventions + error codes, database, queueing, security, chat/WS protocol,
+video pipeline, payments, environment reference, deployment, observability,
+testing, scaling, runbook, and Architecture Decision Records.
+
 ## Scripts
 
-| Script | Purpose |
-| --- | --- |
-| `npm run dev` | Hot-reload API server |
-| `npm run build` | tsc production build to `dist/` |
-| `npm start` | Run built server |
-| `npm run typecheck` | Strict type check |
-| `npm run lint` | ESLint |
-| `npm test` | Vitest unit suite |
+| Script                     | Purpose                                 |
+| -------------------------- | --------------------------------------- |
+| `npm run dev`              | Hot-reload API server                   |
+| `npm run build`            | tsc production build to `dist/`         |
+| `npm start`                | Run built server                        |
+| `npm run typecheck`        | Strict type check                       |
+| `npm run lint`             | ESLint                                  |
+| `npm test`                 | Vitest unit suite                       |
 | `npm run test:integration` | Integration suite (needs compose infra) |
-| `npm run db:generate` | Generate migration from Drizzle schema |
-| `npm run db:migrate` | Apply migrations |
-| `npm run db:seed` | Seed RBAC roles/permissions |
+| `npm run docs:check`       | Docs link checker + prettier check      |
+| `npm run db:generate`      | Generate migration from Drizzle schema  |
+| `npm run db:migrate`       | Apply migrations                        |
+| `npm run db:seed`          | Seed RBAC roles/permissions             |
 
 ## Production
 
@@ -78,31 +86,38 @@ npm test                     # vitest unit suite
 ```
 src/
 ├── app.ts / server.ts        # Fastify factory + bootstrap (graceful shutdown)
-├── config/                   # zod env schema
+├── config/                   # zod env schema (validated at boot)
 ├── modules/                  # vertical slices: auth, users, iam, courses, video,
-│                             #   questions, simulations, results, chat, payments,
-│                             #   notifications, admin, system (health/ready)
-└── shared/                   # cross-cutting kernel: http envelope, db, redis
-                              #   (circuit breaker + degradation), queue, mail,
-                              #   s3, mongo, cache, backoff, rbac, logger, metrics
-tests/                        # vitest unit suites (integration + k6 in later phases)
-load/                         # k6 scenarios (Phase 7)
-docker/                       # pgbouncer.ini, haproxy.cfg, prometheus.yml
+│                             #   questions, simulations, chat, payments, system
+│                             #   each slice: routes + service + repository + index
+├── shared/                   # cross-cutting kernel:
+│   ├── http/                 #   envelope, errors, rate-limit store, idempotency
+│   ├── db/                   #   client (PgBouncer), transaction, filters, schema
+│   ├── redis/                #   client, circuit breaker, degradation manager
+│   ├── cache/                #   cache-aside + version-tagged invalidation
+│   ├── queue/ events/        #   BullMQ helpers, typed event bus
+│   ├── audit/ context/       #   audit trail, AsyncLocalStorage request context
+│   └── auth/ rbac/ backoff/ s3/ mongo/ mail/ metrics/ logger/
+tests/                        # vitest unit + integration suites (see docs/TESTING.md)
+load/                         # k6 load scenarios (see load/README.md)
+docs/                         # full documentation (see docs/README.md)
+scripts/                      # dev tooling (docs link checker)
+docker/                       # pgbouncer.ini, haproxy.cfg, prometheus.yml, grafana
 Jenkinsfile                   # CI/CD pipeline
 ```
 
 ## Roadmap (phases)
 
-| Phase | Scope | Status |
-| --- | --- | --- |
-| 0–1 | Scaffold, kernel, envelope, Redis degradation, DB, RBAC seed, docs | ✅ |
-| 2 | Auth (cookies, OAuth2 Google), users, mail, refresh rotation, lockout | ✅ |
-| 3 | Courses/content/questions + HLS video pipeline (ffmpeg worker) | ✅ |
-| 4 | SNBT simulations: timed sessions, auto-submit, grading jobs, leaderboard | ✅ |
-| 5 | Live chat: WS gateway + MongoDB | ✅ |
-| 6 | Payments: Midtrans/Xendit + webhooks + fulfillment | ✅ |
-| 7 | HAProxy prod, metrics/Grafana dashboards, k6 load suite, read replicas | ✅ |
-| 8 | CI/CD hardening, security audit, runbook | ✅ |
+| Phase | Scope                                                                    | Status |
+| ----- | ------------------------------------------------------------------------ | ------ |
+| 0–1   | Scaffold, kernel, envelope, Redis degradation, DB, RBAC seed, docs       | ✅     |
+| 2     | Auth (cookies, OAuth2 Google), users, mail, refresh rotation, lockout    | ✅     |
+| 3     | Courses/content/questions + HLS video pipeline (ffmpeg worker)           | ✅     |
+| 4     | SNBT simulations: timed sessions, auto-submit, grading jobs, leaderboard | ✅     |
+| 5     | Live chat: WS gateway + MongoDB                                          | ✅     |
+| 6     | Payments: Midtrans/Xendit + webhooks + fulfillment                       | ✅     |
+| 7     | HAProxy prod, metrics/Grafana dashboards, k6 load suite, read replicas   | ✅     |
+| 8     | CI/CD hardening, security audit, runbook                                 | ✅     |
 
 ## License
 

@@ -1,10 +1,12 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { getDb } from "../../shared/db/client.js";
 import { orders, paymentEvents, courseEnrollments, courses, users } from "../../shared/db/schema/index.js";
 import { NotFoundError, BadRequestError, ConflictError } from "../../shared/http/errors.js";
 import { getPaymentProvider } from "./provider.js";
 import { QueueName, enqueue } from "../../shared/queue/queues.js";
+import { decodeCursor, keysetCondition, buildPage } from "../../shared/pagination.js";
 import { getLogger } from "../../shared/logger.js";
+import { eventBus } from "../../shared/events/bus.js";
 
 const log = getLogger();
 
@@ -73,9 +75,26 @@ export const paymentsService = {
     return order;
   },
 
-  async listMyOrders(userId: string) {
+  /** Cursor-paginated my orders: (createdAt DESC, id DESC) keyset. */
+  async listMyOrders(userId: string, cursor?: string, limit = 20) {
     const db = getDb();
-    return db.select().from(orders).where(eq(orders.userId, userId)).orderBy(orders.createdAt);
+    const kc = decodeCursor(cursor);
+    const where = kc
+      ? and(
+          eq(orders.userId, userId),
+          keysetCondition([
+            { name: "created_at", value: kc.createdAt as string, dir: "desc" },
+            { name: "id", value: kc.id as string, dir: "desc" }
+          ])
+        )
+      : eq(orders.userId, userId);
+    const rows = await db
+      .select()
+      .from(orders)
+      .where(where)
+      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .limit(limit);
+    return buildPage(rows, limit, ["createdAt", "id"]);
   },
 
   /**
@@ -100,7 +119,7 @@ export const paymentsService = {
       orderId: o.id,
       provider: providerName,
       eventType: verified.paid ? "paid" : "not_paid",
-      payload: parsed as never,
+      payload: parsed as unknown,
     });
 
     if (!verified.paid) {
@@ -142,6 +161,7 @@ export const paymentsService = {
       });
     }
     await db.update(orders).set({ status: "fulfilled", updatedAt: new Date() }).where(eq(orders.id, orderId));
+    eventBus.emit("order.fulfilled", { orderId, userId: o.userId, courseId: o.courseId });
     log.info({ orderId }, "order fulfilled — enrollment + receipt sent");
   },
 

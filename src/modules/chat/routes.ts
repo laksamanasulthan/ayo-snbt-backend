@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import websocket from "@fastify/websocket";
-import { authGuard, csrfGuard } from "../../shared/middleware/auth.js";
+import { authGuard, csrfGuard, getUser } from "../../shared/middleware/auth.js";
 import { chatService } from "./service.js";
 import { ensureChatIndexes } from "./mongo.js";
 import { handleWsConnection, signWsTicket, bindGatewayDegradation, ensureSubscriber } from "./gateway.js";
@@ -14,7 +14,7 @@ export async function chatModule(app: FastifyInstance): Promise<void> {
 
   // ── Ticket (for WS auth when cookies aren't available) ───────────────
   app.post("/api/v1/chat/ticket", { preHandler: [authGuard] }, async (request, reply) => {
-    const ticket = await signWsTicket(request.user!.id);
+    const ticket = await signWsTicket(getUser(request).id);
     return reply.ok({ ticket, expiresInSeconds: 120 });
   });
 
@@ -25,7 +25,7 @@ export async function chatModule(app: FastifyInstance): Promise<void> {
 
   // ── Rooms ───────────────────────────────────────────────────────────
   app.get("/api/v1/chat/rooms", { preHandler: [authGuard] }, async (request, reply) => {
-    const rooms = await chatService.listMyRooms(request.user!.id);
+    const rooms = await chatService.listMyRooms(getUser(request).id);
     return reply.ok(rooms);
   });
 
@@ -36,14 +36,15 @@ export async function chatModule(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const body = request.body as Record<string, unknown>;
-    const room = await chatService.createRoom({ id: request.user!.id, name: request.user!.email, roles: request.user!.roles }, body as never);
+    const user = getUser(request);
+    const room = await chatService.createRoom({ id: user.id, name: user.email, roles: user.roles }, body as unknown as Parameters<typeof chatService.createRoom>[1]);
     return reply.created(room);
   });
 
   app.post("/api/v1/chat/rooms/:id/join", { preHandler: [authGuard] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const room = await chatService.getRoom(id);
-    await chatService.assertMember(request.user!, room);
+    await chatService.assertMember(getUser(request), room);
     return reply.ok({ joined: true });
   });
 
@@ -54,14 +55,14 @@ export async function chatModule(app: FastifyInstance): Promise<void> {
     const before = q.before ? Number(q.before) : undefined;
     const limit = q.limit ? Number(q.limit) : 50;
     const room = await chatService.getRoom(id);
-    await chatService.assertMember(request.user!, room);
+    await chatService.assertMember(getUser(request), room);
     const messages = await chatService.history(id, before, limit);
     return reply.ok(messages);
   });
 
   app.post("/api/v1/chat/rooms/:id/read", { preHandler: [authGuard] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    await chatService.markRead(request.user!.id, id);
+    await chatService.markRead(getUser(request).id, id);
     return reply.ok({ read: true });
   });
 }

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../shared/db/client.js";
-import { roles, permissions, userRoles } from "../../shared/db/schema/index.js";
+import { roles, permissions, userRoles, users } from "../../shared/db/schema/index.js";
 import { authGuard, requirePermission, csrfGuard } from "../../shared/middleware/auth.js";
 import { Permissions } from "../../shared/rbac/permissions.js";
 import { NotFoundError } from "../../shared/http/errors.js";
@@ -37,6 +37,10 @@ export async function iamModule(app: FastifyInstance): Promise<void> {
     const { roleId } = request.body as { roleId: string };
     const role = await db.select({ id: roles.id }).from(roles).where(eq(roles.id, roleId)).limit(1);
     if (!role[0]) throw new NotFoundError("Role not found");
+    // Existence check first: an unknown user would otherwise surface as an
+    // unhandled FK violation (500) instead of a clean 404.
+    const user = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
+    if (!user[0]) throw new NotFoundError("User not found");
     await db.insert(userRoles).values({ userId, roleId }).onConflictDoNothing();
     return reply.created({ assigned: true });
   });

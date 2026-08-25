@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { authGuard, optionalAuth, csrfGuard, requirePermission } from "../../shared/middleware/auth.js";
+import { authGuard, optionalAuth, csrfGuard, requirePermission, getUser } from "../../shared/middleware/auth.js";
 import { Permissions } from "../../shared/rbac/permissions.js";
 import { simulationsService } from "./service.js";
 
@@ -9,11 +9,10 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
 
   // ── Packages (public read, admin/mentor CRUD) ────────────────────────
   app.get("/api/v1/simulations/packages", async (request, reply) => {
-    const q = (request.query ?? {}) as { page?: unknown; perPage?: unknown };
-    const page = Number(q.page ?? 1);
-    const perPage = Number(q.perPage ?? 10);
-    const result = await simulationsService.listPackages({ page, perPage });
-    return reply.ok(result.rows, { pagination: { page, perPage, total: result.total, totalPages: result.totalPages } });
+    const q = request.query as { cursor?: string; limit?: unknown };
+    const limit = Number(q.limit ?? 20);
+    const result = await simulationsService.listPackages({ cursor: q.cursor, limit });
+    return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
   });
 
   app.get("/api/v1/simulations/packages/:id", async (request, reply) => {
@@ -29,7 +28,7 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const body = request.body as Record<string, unknown>;
-    const pkg = await simulationsService.createPackage(request.user!.id, body as never);
+    const pkg = await simulationsService.createPackage(getUser(request).id, body as unknown as Parameters<typeof simulationsService.createPackage>[1]);
     return reply.created(pkg);
   });
 
@@ -46,27 +45,38 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
     return reply.ok({ published: pkg.status === "published" });
   });
 
+  app.delete("/api/v1/simulations/packages/:id", { preHandler: manageGuard }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await simulationsService.removePackage(getUser(request), id);
+    return reply.ok(result);
+  });
+
+  app.post("/api/v1/simulations/packages/:id/restore", { preHandler: manageGuard }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await simulationsService.restorePackage(getUser(request), id);
+    return reply.ok(result);
+  });
+
   // ── Sessions (student) ───────────────────────────────────────────────
   app.post("/api/v1/simulations/:packageId/start", {
     preHandler: [authGuard],
     config: { rateLimit: { max: 10, timeWindow: 60_000 } }
   }, async (request, reply) => {
     const { packageId } = request.params as { packageId: string };
-    const result = await simulationsService.startSession(request.user!.id, packageId);
+    const result = await simulationsService.startSession(getUser(request).id, packageId);
     return reply.created(result);
   });
 
   app.get("/api/v1/simulations/sessions", { preHandler: [authGuard] }, async (request, reply) => {
-    const q = (request.query ?? {}) as { page?: unknown; perPage?: unknown };
-    const page = Number(q.page ?? 1);
-    const perPage = Number(q.perPage ?? 20);
-    const rows = await simulationsService.listMySessions(request.user!.id, page, perPage);
-    return reply.ok(rows);
+    const q = request.query as { cursor?: string; limit?: unknown };
+    const limit = Number(q.limit ?? 20);
+    const result = await simulationsService.listMySessions(getUser(request).id, q.cursor, limit);
+    return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
   });
 
   app.get("/api/v1/simulations/sessions/:id", { preHandler: [authGuard] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const session = await simulationsService.getSession(request.user!.id, id);
+    const session = await simulationsService.getSession(getUser(request).id, id);
     return reply.ok(session);
   });
 
@@ -80,7 +90,7 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const { questionId, selectedOptionId } = request.body as { questionId: string; selectedOptionId: string };
-    const result = await simulationsService.saveAnswer(request.user!.id, id, questionId, selectedOptionId);
+    const result = await simulationsService.saveAnswer(getUser(request).id, id, questionId, selectedOptionId);
     return reply.ok(result);
   });
 
@@ -89,13 +99,13 @@ export async function simulationsModule(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { max: 5, timeWindow: 60_000 } }
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const result = await simulationsService.submitSession(request.user!.id, id);
+    const result = await simulationsService.submitSession(getUser(request).id, id);
     return reply.accepted(result);
   });
 
   app.get("/api/v1/simulations/sessions/:id/result", { preHandler: [authGuard] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const result = await simulationsService.getResult(request.user!.id, id);
+    const result = await simulationsService.getResult(getUser(request).id, id);
     return reply.ok(result);
   });
 

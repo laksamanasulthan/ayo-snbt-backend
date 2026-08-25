@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../shared/db/client.js";
+import { userRepo } from "./repository.js";
 import { users } from "../../shared/db/schema/index.js";
 import { NotFoundError, ConflictError } from "../../shared/http/errors.js";
 import { presignPut } from "../../shared/s3/client.js";
@@ -8,15 +9,17 @@ import { randomUUID } from "node:crypto";
 
 export const usersService = {
   async getProfile(userId: string) {
-    const db = getDb();
-    const row = await db
-      .select({ id: users.id, email: users.email, name: users.name, avatarUrl: users.avatarUrl, emailVerifiedAt: users.emailVerifiedAt, createdAt: users.createdAt })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
+    const row = await userRepo.findActiveById(userId);
     const user = row[0];
     if (!user) throw new NotFoundError("User not found");
-    return user;
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      emailVerifiedAt: user.emailVerifiedAt,
+      createdAt: user.createdAt
+    };
   },
 
   async updateProfile(userId: string, input: { name?: string }) {

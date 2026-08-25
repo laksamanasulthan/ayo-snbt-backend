@@ -28,7 +28,11 @@ export function seededShuffle<T>(input: T[], seed: string): T[] {
   const rand = mulberry32(hashSeed(seed));
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
-    [arr[i], arr[j]] = [arr[j]!, arr[i]!];
+    const a = arr[i];
+    const b = arr[j];
+    if (a === undefined || b === undefined) continue;
+    arr[i] = b;
+    arr[j] = a;
   }
   return arr;
 }

@@ -121,6 +121,43 @@ describe("Phase 6: payments (mock provider)", () => {
     expect(enroll.rows.length).toBe(1);
   });
 
+  it("honors Idempotency-Key on order creation", async () => {
+    const db = getPool();
+    // Fresh paid course for a clean idempotency check
+    const course = await db.query("INSERT INTO courses (title, slug, status, price_cents) VALUES ($1, $2, $3, $4) RETURNING id", ["Kursus Idem", "idem-" + Date.now(), "published", 25000]);
+    const idemCourseId = course.rows[0]?.id as string;
+    const key = "test-order-" + Date.now();
+    const headers = { ...authHeaders(studentToken), "content-type": "application/json", "idempotency-key": key };
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/v1/payments/orders",
+      headers,
+      payload: { courseId: idemCourseId }
+    });
+    expect(first.statusCode).toBe(201);
+    const firstOrderId = first.json().data.order.id;
+
+    // Same key + same payload → replay, same order id, no new order created
+    const replay = await app.inject({
+      method: "POST",
+      url: "/api/v1/payments/orders",
+      headers,
+      payload: { courseId: idemCourseId }
+    });
+    expect(replay.statusCode).toBe(201);
+    expect(replay.json().data.order.id).toBe(firstOrderId);
+
+    // Same key + different payload → 409 IDEMPOTENCY_KEY_REUSED
+    const misuse = await app.inject({
+      method: "POST",
+      url: "/api/v1/payments/orders",
+      headers,
+      payload: { courseId: courseId } // different course!
+    });
+    expect(misuse.statusCode).toBe(409);
+    expect(misuse.json().error.code).toBe("IDEMPOTENCY_KEY_REUSED");
+  });
+
   it("is idempotent — duplicate webhook does not re-process", async () => {
     const order = await app.inject({
       method: "GET",

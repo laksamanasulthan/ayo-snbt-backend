@@ -19,9 +19,15 @@ export interface RateLimitStore {
  * fall back to a per-instance in-memory store — rate limiting is NEVER
  * silently disabled.
  */
+export interface RateLimitRedis {
+  incr(k: string): Promise<number>;
+  pexpire(k: string, ms: number): Promise<unknown>;
+  pttl(k: string): Promise<number>;
+}
+
 export function createRedisRateLimitStore(
   degradation: DegradationManager,
-  redis: { incr(k: string): Promise<number>; pexpire(k: string, ms: number): Promise<unknown>; pttl(k: string): Promise<number> },
+  redis: RateLimitRedis,
   prefix = "asbt:rl"
 ) {
   class RedisRateLimitStore implements RateLimitStore {

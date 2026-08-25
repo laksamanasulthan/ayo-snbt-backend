@@ -2,7 +2,7 @@ import fp from "fastify-plugin";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { isAppError, TooManyRequestsError } from "./errors.js";
-import { buildReplyHelpers, type ErrorEnvelope } from "./envelope.js";
+import { buildReplyHelpers, type ErrorEnvelope, type ReplyMeta } from "./envelope.js";
 import { getLogger } from "../logger.js";
 
 export interface EnvelopeErrorBody {
@@ -31,14 +31,14 @@ export const httpKernelPlugin = fp(async (app: FastifyInstance) => {
   });
 
   // ── reply helpers ──────────────────────────────────────────────────────
-  app.decorateReply("ok", function (this: FastifyReply, data: unknown, opts?: unknown) {
-    return buildReplyHelpers(this).ok(data, opts as never);
+  app.decorateReply("ok", function (this: FastifyReply, data: unknown, opts?: ReplyMeta) {
+    return buildReplyHelpers(this).ok(data, opts);
   });
-  app.decorateReply("created", function (this: FastifyReply, data: unknown, opts?: unknown) {
-    return buildReplyHelpers(this).created(data, opts as never);
+  app.decorateReply("created", function (this: FastifyReply, data: unknown, opts?: ReplyMeta) {
+    return buildReplyHelpers(this).created(data, opts);
   });
-  app.decorateReply("accepted", function (this: FastifyReply, data: unknown, opts?: unknown) {
-    return buildReplyHelpers(this).accepted(data, opts as never);
+  app.decorateReply("accepted", function (this: FastifyReply, data: unknown, opts?: ReplyMeta) {
+    return buildReplyHelpers(this).accepted(data, opts);
   });
   app.decorateReply("noContent", function (this: FastifyReply) {
     return buildReplyHelpers(this).noContent();
@@ -79,6 +79,24 @@ export const httpKernelPlugin = fp(async (app: FastifyInstance) => {
           message: err.message,
           statusCode: err.statusCode,
           ...(err.details !== undefined ? { details: err.details } : {}),
+          requestId
+        }
+      } satisfies ErrorEnvelope);
+    }
+
+    // PostgreSQL data errors from malformed input (e.g. a non-UUID in a
+    // UUID column: SQLSTATE 22P02) are CLIENT errors — never surface as 500.
+    // DrizzleQueryError wraps the pg error in cause; check both.
+    const pgCode = (err as { code?: string; cause?: { code?: string } }).code
+      ?? (err as { cause?: { code?: string } }).cause?.code;
+    if (typeof err === "object" && err !== null && pgCode === "22P02") {
+      request.log.warn({ err }, "invalid identifier format");
+      return reply.code(400).send({
+        success: false,
+        error: {
+          code: "INVALID_ID",
+          message: "Invalid identifier format",
+          statusCode: 400,
           requestId
         }
       } satisfies ErrorEnvelope);
@@ -136,9 +154,9 @@ export const httpKernelPlugin = fp(async (app: FastifyInstance) => {
 // Type augmentation so reply.ok etc. are typed everywhere
 declare module "fastify" {
   interface FastifyReply {
-    ok<T>(data: T, opts?: { pagination?: { page: number; perPage: number; total: number; totalPages: number } }): FastifyReply;
-    created<T>(data: T, opts?: { pagination?: { page: number; perPage: number; total: number; totalPages: number } }): FastifyReply;
-    accepted<T>(data: T, opts?: { pagination?: { page: number; perPage: number; total: number; totalPages: number } }): FastifyReply;
+    ok<T>(data: T, opts?: ReplyMeta): FastifyReply;
+    created<T>(data: T, opts?: ReplyMeta): FastifyReply;
+    accepted<T>(data: T, opts?: ReplyMeta): FastifyReply;
     noContent(): FastifyReply;
   }
 }

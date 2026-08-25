@@ -10,7 +10,8 @@ import { randomUUID } from "node:crypto";
 import { ListBucketsCommand } from "@aws-sdk/client-s3";
 import { getEnv, type Env } from "./config/index.js";
 import { httpKernelPlugin } from "./shared/http/index.js";
-import { createRedisRateLimitStore } from "./shared/http/rate-limit-store.js";
+import { idempotencyPlugin } from "./shared/http/idempotency.js";
+import { createRedisRateLimitStore, type RateLimitRedis } from "./shared/http/rate-limit-store.js";
 import {
   DegradationManager,
   RedisHealthMonitor,
@@ -23,6 +24,8 @@ import { getMongoClient } from "./shared/mongo/client.js";
 import { getS3Client } from "./shared/s3/client.js";
 import { getLogger } from "./shared/logger.js";
 import { bindCache } from "./shared/cache/cache.js";
+import { runWithRequestContext } from "./shared/context/request-context.js";
+import { subscribeEvents } from "./shared/events/subscriptions.js";
 import { metricsPlugin, setMetricDegradation, startQueueMetricsPolling } from "./shared/metrics/index.js";
 import { systemModule, HealthRegistry } from "./modules/system/index.js";
 import { authModule } from "./modules/auth/index.js";
@@ -87,6 +90,15 @@ export function buildRealDegradation(): DegradationManager {
   return mgr;
 }
 
+/** Structural adapter: ioredis → the narrow RateLimitRedis shape. */
+function redisRateLimitAdapter(redis: ReturnType<typeof getRedis>): RateLimitRedis {
+  return {
+    incr: (k) => redis.incr(k),
+    pexpire: (k, ms) => redis.pexpire(k, ms),
+    pttl: (k) => redis.pttl(k)
+  };
+}
+
 /** Production health registry wired to real components. */
 export function buildRealHealthRegistry(degradation: DegradationManager): HealthRegistry {
   const registry = new HealthRegistry();
@@ -146,9 +158,19 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     trustProxy: env.TRUST_PROXY
   });
 
+  subscribeEvents();
   app.decorate("degradation", degradation);
-  bindCache(degradation);
+  if (!opts.minimal) bindCache(degradation);
   setMetricDegradation(degradation);
+
+  // ── Request context (AsyncLocalStorage: requestId, ip, user-agent) ────
+  app.addHook("onRequest", async (request) => {
+    const fwd = request.headers["x-forwarded-for"];
+    const ip = typeof fwd === "string" ? (fwd.split(",")[0]?.trim() ?? "unknown") : (request.socket.remoteAddress ?? "unknown");
+    runWithRequestContext({ requestId: request.id, ip, userAgent: request.headers["user-agent"] }, () => {
+      // no-op: the store is read by services via getRequestContext()
+    });
+  });
 
   // ── Infrastructure plugins ────────────────────────────────────────────
   await app.register(cookie);
@@ -177,7 +199,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       global: true,
       max: env.RATE_LIMIT_GLOBAL_MAX,
       timeWindow: env.RATE_LIMIT_GLOBAL_WINDOW_MS,
-      store: createRedisRateLimitStore(degradation, getRedis() as never),
+      store: createRedisRateLimitStore(degradation, redisRateLimitAdapter(getRedis())),
       enableDraftSpec: false
     });
   }
@@ -235,6 +257,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   // ── Cross-cutting kernel (envelope, error/404 handlers, reply helpers) ─
   await app.register(httpKernelPlugin);
+  await app.register(idempotencyPlugin);
   await app.register(metricsPlugin);
 
   // ── Vertical slice modules ────────────────────────────────────────────

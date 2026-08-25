@@ -47,9 +47,10 @@ export async function seedRbac(): Promise<void> {
 /** Optional: create a bootstrap admin from env (ADMIN_EMAIL, ADMIN_PASSWORD). */
 export async function seedAdmin(): Promise<void> {
   const env = process.env;
-  if (!env.ADMIN_EMAIL || !env.ADMIN_PASSWORD) return;
+  const adminEmail = env.ADMIN_EMAIL;
+  if (!adminEmail || !env.ADMIN_PASSWORD) return;
   const db = getDb();
-  const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, env.ADMIN_EMAIL!)).limit(1);
+  const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, adminEmail)).limit(1);
   if (existing.length > 0) {
     getLogger().info("admin already exists");
     return;
@@ -57,7 +58,7 @@ export async function seedAdmin(): Promise<void> {
   // Password hashing lands in the auth slice (Phase 2); seed without password for now.
   const [admin] = await db
     .insert(users)
-    .values({ email: env.ADMIN_EMAIL, name: "Admin", emailVerifiedAt: new Date() })
+    .values({ email: adminEmail, name: "Admin", emailVerifiedAt: new Date() })
     .returning({ id: users.id });
   const role = await db.select({ id: roles.id }).from(roles).where(eq(roles.name, RoleName.ADMIN)).limit(1);
   if (admin && role[0]) {

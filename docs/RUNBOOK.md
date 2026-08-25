@@ -2,19 +2,19 @@
 
 ## Service inventory
 
-| Service | Port (host) | Purpose |
-| --- | --- | --- |
-| API (Fastify) | 3000 | REST + WebSocket gateway |
-| Worker (BullMQ) | — | email, grading, transcode, payment fulfillment |
-| PgBouncer | 6432 | PostgreSQL transaction pooling |
-| PostgreSQL 18 | 5433 | primary database (5432 may clash with host PG) |
-| Redis 7 | 6379 | cache, rate limit, queues, presence, degradation |
-| MongoDB 7 | 27017 | chat storage |
-| MinIO (S3) | 9000/9001 | media (images, videos, HLS) |
-| Mailpit | 1025/8025 | dev SMTP + web UI |
-| Prometheus | 9090 | metrics scrape |
-| Grafana | 3001 | dashboards |
-| HAProxy (prod) | 80 / 8404 | LB + stats |
+| Service         | Port (host) | Purpose                                          |
+| --------------- | ----------- | ------------------------------------------------ |
+| API (Fastify)   | 3000        | REST + WebSocket gateway                         |
+| Worker (BullMQ) | —           | email, grading, transcode, payment fulfillment   |
+| PgBouncer       | 6432        | PostgreSQL transaction pooling                   |
+| PostgreSQL 18   | 5433        | primary database (5432 may clash with host PG)   |
+| Redis 7         | 6379        | cache, rate limit, queues, presence, degradation |
+| MongoDB 7       | 27017       | chat storage                                     |
+| MinIO (S3)      | 9000/9001   | media (images, videos, HLS)                      |
+| Mailpit         | 1025/8025   | dev SMTP + web UI                                |
+| Prometheus      | 9090        | metrics scrape                                   |
+| Grafana         | 3001        | dashboards                                       |
+| HAProxy (prod)  | 80 / 8404   | LB + stats                                       |
 
 ## Deploy (Jenkins-driven)
 
@@ -66,25 +66,30 @@ mc mirror local/ayosnbt-images backup/ayosnbt-images
 ## Incident response
 
 ### Redis down / full
+
 1. Check `docker logs ayo-snbt-redis-1`; verify `maxmemory` and `INFO memory`.
 2. The app **auto-degrades** (verified): cache→DB, rate limits→memory, queue→reject/outbox. `GET /ready` reports gate modes.
 3. Redis returns → gates recover automatically after 3 healthy pings (hysteresis).
 
 ### Queue backlog
+
 1. `GET /metrics | grep ayosnbt_queue_depth` — identify the queue.
 2. Scale workers: `docker compose up -d --scale worker=N`.
 3. Check worker logs for job failures (`job failed` entries) — jobs retry with exponential backoff.
 
 ### PgBouncer connection exhaustion
+
 1. `docker logs ayo-snbt-pgbouncer-1` — look for `no more connections allowed`.
 2. Check `SHOW POOLS;` via `psql -h localhost -p 6432 -U ayosnbt -d pgbouncer`.
 3. Raise `default_pool_size` / `max_client_conn` in pgbouncer config, restart pgbouncer.
 
 ### API instance unhealthy
+
 1. `/ready` returns non-200 → HAProxy drains the instance automatically.
 2. `docker logs <api-container>` for the failure; fix, redeploy via Jenkins.
 
 ### Payment webhook replay
+
 1. Idempotency keys (`payment_events.event_id` unique) make replays safe.
 2. Verify order state: `SELECT status FROM orders WHERE order_number = '...'`.
 3. Manually re-trigger fulfillment: `docker compose exec worker node -e "..."` or via BullMQ dashboard.

@@ -8,10 +8,9 @@ import type { FastifyReply } from "fastify";
  * Error:   { success: false, error: { code, message, details?, requestId } }
  */
 export interface PaginationMeta {
-  page: number;
-  perPage: number;
-  total: number;
-  totalPages: number;
+  /** Opaque cursor for the next page; null when no more rows. */
+  nextCursor: string | null;
+  limit: number;
 }
 
 export interface SuccessEnvelope<T> {

@@ -1,5 +1,11 @@
 import { and, eq, inArray, sql, desc } from "drizzle-orm";
 import { getDb, getReadDb } from "../../shared/db/client.js";
+import { decodeCursor, keysetCondition, buildPage } from "../../shared/pagination.js";
+import { notDeleted } from "../../shared/db/filters.js";
+import { simulationPackageRepo } from "./repository.js";
+import { audit } from "../../shared/audit/audit.js";
+import { cacheVersion, bumpCacheVersion } from "../../shared/cache/version.js";
+import { eventBus } from "../../shared/events/bus.js";
 import {
   simulationPackages, simulationSessions, simulationAnswers, questions, questionOptions, users
 } from "../../shared/db/schema/index.js";
@@ -22,41 +28,41 @@ export interface PackageInput {
 
 export const simulationsService = {
   // ── Packages ────────────────────────────────────────────────────────
-  async listPackages(input: { page: number; perPage: number }) {
+  /** Cursor-paginated published packages: (createdAt DESC, id DESC) keyset. */
+  async listPackages(input: { cursor?: string; limit: number }) {
     const db = getDb();
-    const { page, perPage } = input;
-    const cacheKey = "sims:packages:" + page + ":" + perPage;
+    const { limit } = input;
+    const cacheKey = "sims:packages:v" + (await cacheVersion("simulation_packages")) + ":" + (input.cursor ?? "first");
+    const buildWhere = () => {
+      const kc = decodeCursor(input.cursor);
+      const base = and(eq(simulationPackages.status, "published"), notDeleted(simulationPackages.deletedAt));
+      return kc
+        ? and(base, keysetCondition([
+            { name: "created_at", value: kc.createdAt as string, dir: "desc" },
+            { name: "id", value: kc.id as string, dir: "desc" }
+          ]))
+        : base;
+    };
+    const query = () =>
+      db
+        .select()
+        .from(simulationPackages)
+        .where(buildWhere())
+        .orderBy(desc(simulationPackages.createdAt), desc(simulationPackages.id))
+        .limit(limit);
     const cached = await getCache()
-      .get<{ rows: unknown[]; total: number; totalPages: number } | null>(cacheKey, async () => {
-        const total = await db.select({ count: simulationPackages.id }).from(simulationPackages).where(eq(simulationPackages.status, "published"));
-        const rows = await db
-          .select()
-          .from(simulationPackages)
-          .where(eq(simulationPackages.status, "published"))
-          .orderBy(desc(simulationPackages.createdAt))
-          .limit(perPage)
-          .offset((page - 1) * perPage);
-        const totalCount = Number(total[0]?.count ?? 0);
-        return { rows, total: totalCount, totalPages: Math.max(1, Math.ceil(totalCount / perPage)) };
-      },
-      30_000
-    ).catch(() => null);
+      .get<{ rows: unknown[]; nextCursor: string | null; limit: number } | null>(
+        cacheKey,
+        async () => buildPage(await query(), limit, ["createdAt", "id"]),
+        30_000
+      )
+      .catch(() => null);
     if (cached) return cached;
-    const total = await db.select({ count: simulationPackages.id }).from(simulationPackages).where(eq(simulationPackages.status, "published"));
-    const rows = await db
-      .select()
-      .from(simulationPackages)
-      .where(eq(simulationPackages.status, "published"))
-      .orderBy(desc(simulationPackages.createdAt))
-      .limit(perPage)
-      .offset((page - 1) * perPage);
-    const totalCount = Number(total[0]?.count ?? 0);
-    return { rows, total: totalCount, totalPages: Math.max(1, Math.ceil(totalCount / perPage)) };
+    return buildPage(await query(), limit, ["createdAt", "id"]);
   },
 
   async getPackage(id: string) {
-    const db = getDb();
-    const row = await db.select().from(simulationPackages).where(eq(simulationPackages.id, id)).limit(1);
+    const row = await simulationPackageRepo.findById(id);
     const pkg = row[0];
     if (!pkg) throw new NotFoundError("Simulation package not found");
     return pkg;
@@ -66,7 +72,7 @@ export const simulationsService = {
     const db = getDb();
     const [row] = await db.insert(simulationPackages).values({ ...input, createdBy: userId }).returning();
     if (!row) throw new ConflictError("Failed to create package");
-    await getCache().del("sims:packages:1:10");
+    await bumpCacheVersion("simulation_packages");
     return row;
   },
 
@@ -74,8 +80,36 @@ export const simulationsService = {
     const db = getDb();
     const [row] = await db.update(simulationPackages).set({ ...input, updatedAt: new Date() }).where(eq(simulationPackages.id, id)).returning();
     if (!row) throw new NotFoundError("Package not found");
-    await getCache().del("sims:packages:1:10");
+    await bumpCacheVersion("simulation_packages");
+    eventBus.emit("simulation_package.updated", { packageId: id });
     return row;
+  },
+
+  /** Soft delete a package (admin/mentor) + audit. */
+  async removePackage(user: { id: string; roles: string[] }, id: string) {
+    if (!user.roles.includes("admin") && !user.roles.includes("mentor")) throw new ForbiddenError("Insufficient permissions");
+    const pkg = await simulationPackageRepo.findById(id);
+    const p = pkg[0];
+    if (!p) throw new NotFoundError("Package not found");
+    await simulationPackageRepo.softDelete(id);
+    await audit({ action: "simulation_package.delete", resourceType: "simulation_package", resourceId: id, before: { title: p.title } });
+    await bumpCacheVersion("simulation_packages");
+    eventBus.emit("simulation_package.deleted", { packageId: id });
+    return { deleted: true, soft: true };
+  },
+
+  /** Admin restore after soft delete. */
+  async restorePackage(user: { id: string; roles: string[] }, id: string) {
+    if (!user.roles.includes("admin")) throw new ForbiddenError("Only admins can restore packages");
+    const pkg = await simulationPackageRepo.findById(id);
+    if (pkg[0]) return { restored: true, alreadyActive: true };
+    const deleted = await getDb().select().from(simulationPackages).where(eq(simulationPackages.id, id)).limit(1);
+    const p = deleted[0];
+    if (!p) throw new NotFoundError("Package not found");
+    await simulationPackageRepo.restore(id);
+    await audit({ action: "simulation_package.restore", resourceType: "simulation_package", resourceId: id });
+    await bumpCacheVersion("simulation_packages");
+    return { restored: true };
   },
 
   // ── Sessions ────────────────────────────────────────────────────────
@@ -98,8 +132,8 @@ export const simulationsService = {
       const rows = await db
         .select({ id: questions.id })
         .from(questions)
-        .where(and(eq(questions.category, category), eq(questions.type, "multiple_choice")))
-        .orderBy(sql`random()`)
+        .where(and(eq(questions.category, category), eq(questions.type, "multiple_choice"), notDeleted(questions.deletedAt)))
+        .orderBy(sql.raw("random()"))
         .limit(wanted);
       picked.push(...rows.map((r) => ({ id: r.id, category })));
     }
@@ -229,23 +263,34 @@ export const simulationsService = {
     };
   },
 
-  async listMySessions(userId: string, page: number, perPage: number) {
+  /** Cursor-paginated my sessions: (startedAt DESC, id DESC) keyset. */
+  async listMySessions(userId: string, cursor: string | undefined, limit: number) {
     const db = getDb();
+    const kc = decodeCursor(cursor);
+    const where = kc
+      ? and(
+          eq(simulationSessions.userId, userId),
+          keysetCondition([
+            // Qualified names: the query JOINs simulation_packages (also has id)
+            { name: "simulation_sessions.started_at", value: kc.startedAt as string, dir: "desc" },
+            { name: "simulation_sessions.id", value: kc.id as string, dir: "desc" }
+          ])
+        )
+      : eq(simulationSessions.userId, userId);
     const rows = await db
-      .select({ id: simulationSessions.id, packageTitle: simulationPackages.title, status: simulationSessions.status, score: simulationSessions.score, percentile: simulationSessions.percentile, startedAt: simulationSessions.startedAt, submittedAt: simulationSessions.submittedAt })
+      .select({ id: simulationSessions.id, packageTitle: simulationPackages.title, status: simulationSessions.status, score: simulationSessions.score, percentile: simulationSessions.percentile, startedAt: simulationSessions.startedAt, submittedAt: simulationSessions.submittedAt, createdAt: simulationSessions.startedAt })
       .from(simulationSessions)
       .innerJoin(simulationPackages, eq(simulationPackages.id, simulationSessions.packageId))
-      .where(eq(simulationSessions.userId, userId))
-      .orderBy(desc(simulationSessions.startedAt))
-      .limit(perPage)
-      .offset((page - 1) * perPage);
-    return rows;
+      .where(where)
+      .orderBy(desc(simulationSessions.startedAt), desc(simulationSessions.id))
+      .limit(limit);
+    return buildPage(rows, limit, ["createdAt", "id"]);
   },
 
   // ── Leaderboard ─────────────────────────────────────────────────────
   async getLeaderboard(packageId: string, limit = 20) {
     const db = getReadDb(); // leaderboard reads hit the replica when configured
-    const cacheKey = "sims:leaderboard:" + packageId + ":" + limit;
+    const cacheKey = "sims:leaderboard:v" + (await cacheVersion("leaderboard:" + packageId)) + ":" + packageId + ":" + limit;
     const cached = await getCache()
       .get<unknown[] | null>(cacheKey, async () => {
         const rows = await db
@@ -359,7 +404,8 @@ export const simulationsService = {
       .update(simulationSessions)
       .set({ status: "graded", score, maxScore, correctCount: correct, wrongCount: wrong, blankCount: blank, percentile })
       .where(eq(simulationSessions.id, sessionId));
-    await getCache().del("sims:leaderboard:" + s.packageId + ":20");
+    await bumpCacheVersion("leaderboard:" + s.packageId);
+    eventBus.emit("leaderboard.changed", { packageId: s.packageId });
     log.info({ sessionId, score, maxScore, correct, wrong, blank, percentile }, "session graded");
   },
 

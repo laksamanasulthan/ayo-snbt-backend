@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { authGuard, csrfGuard, requirePermission } from "../../shared/middleware/auth.js";
+import { authGuard, csrfGuard, requirePermission, getUser } from "../../shared/middleware/auth.js";
 import { Permissions } from "../../shared/rbac/permissions.js";
 import { paymentsService } from "./service.js";
 
@@ -15,18 +15,20 @@ export async function paymentsModule(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { max: 10, timeWindow: 60_000 } }
   }, async (request, reply) => {
     const { courseId } = request.body as { courseId: string };
-    const result = await paymentsService.createOrder(request.user!.id, courseId);
+    const result = await paymentsService.createOrder(getUser(request).id, courseId);
     return reply.created(result);
   });
 
   app.get("/api/v1/payments/orders", { preHandler: [authGuard] }, async (request, reply) => {
-    const orders = await paymentsService.listMyOrders(request.user!.id);
-    return reply.ok(orders);
+    const q = request.query as { cursor?: string; limit?: unknown };
+    const limit = Number(q.limit ?? 20);
+    const result = await paymentsService.listMyOrders(getUser(request).id, q.cursor, limit);
+    return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
   });
 
   app.get("/api/v1/payments/orders/:id", { preHandler: [authGuard] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const order = await paymentsService.getOrder(request.user!.id, id);
+    const order = await paymentsService.getOrder(getUser(request).id, id);
     return reply.ok(order);
   });
 
@@ -35,7 +37,7 @@ export async function paymentsModule(app: FastifyInstance): Promise<void> {
     preHandler: [authGuard, requirePermission(Permissions.PAYMENT_REFUND)]
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    await paymentsService.refundOrder(request.user!.id, id);
+    await paymentsService.refundOrder(getUser(request).id, id);
     return reply.ok({ refunded: true });
   });
 
@@ -43,14 +45,14 @@ export async function paymentsModule(app: FastifyInstance): Promise<void> {
   app.post("/api/v1/payments/webhook/midtrans", {
     config: { csrf: false, rateLimit: { max: 60, timeWindow: 60_000 } }
   }, async (request, reply) => {
-    const result = await paymentsService.handleWebhook("midtrans", request.body as Record<string, unknown>, request.headers as never);
+    const result = await paymentsService.handleWebhook("midtrans", request.body as Record<string, unknown>, request.headers as unknown as Record<string, string | string[] | undefined>);
     return reply.ok(result);
   });
 
   app.post("/api/v1/payments/webhook/xendit", {
     config: { csrf: false, rateLimit: { max: 60, timeWindow: 60_000 } }
   }, async (request, reply) => {
-    const result = await paymentsService.handleWebhook("xendit", request.body as Record<string, unknown>, request.headers as never);
+    const result = await paymentsService.handleWebhook("xendit", request.body as Record<string, unknown>, request.headers as unknown as Record<string, string | string[] | undefined>);
     return reply.ok(result);
   });
 

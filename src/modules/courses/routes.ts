@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { authGuard, optionalAuth, csrfGuard, requirePermission } from "../../shared/middleware/auth.js";
+import { authGuard, optionalAuth, csrfGuard, requirePermission, getUser } from "../../shared/middleware/auth.js";
 import { Permissions } from "../../shared/rbac/permissions.js";
 import { coursesService } from "./service.js";
 import { ForbiddenError } from "../../shared/http/errors.js";
+import { parseLimit } from "../../shared/pagination.js";
 
 export async function coursesModule(app: FastifyInstance): Promise<void> {
   // Encapsulated plugin: mutating routes need CSRF; auth routes unaffected
@@ -12,14 +13,13 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
   app.get("/api/v1/courses", {
     preHandler: [optionalAuth],
     schema: {
-      querystring: { type: "object", properties: { page: { type: "integer", default: 1 }, perPage: { type: "integer", default: 10 } } }
+      querystring: { type: "object", properties: { cursor: { type: "string" }, limit: { type: "integer" } } }
     }
   }, async (request, reply) => {
-    const q = (request.query ?? {}) as { page?: unknown; perPage?: unknown };
-    const page = Number(q.page ?? 1);
-    const perPage = Number(q.perPage ?? 10);
-    const result = await coursesService.list({ page, perPage });
-    return reply.ok(result.rows, { pagination: { page: result.page, perPage: result.perPage, total: result.total, totalPages: result.totalPages } });
+    const q = request.query as { cursor?: string; limit?: unknown };
+    const limit = parseLimit(q.limit, 20);
+    const result = await coursesService.list({ cursor: q.cursor, limit });
+    return reply.ok(result.rows, { pagination: { nextCursor: result.nextCursor, limit: result.limit } });
   });
 
   app.get("/api/v1/courses/:id", { preHandler: [optionalAuth] }, async (request, reply) => {
@@ -42,7 +42,7 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const body = request.body as { title: string; description?: string; category?: string; level?: string; priceCents?: number };
-    const course = await coursesService.create(request.user!.id, body);
+    const course = await coursesService.create(getUser(request).id, body);
     return reply.created(course);
   });
 
@@ -55,7 +55,7 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
-    const course = await coursesService.update(request.user!, id, body);
+    const course = await coursesService.update(getUser(request), id, body);
     return reply.ok(course);
   });
 
@@ -63,14 +63,27 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
     preHandler: [authGuard, requirePermission(Permissions.COURSE_PUBLISH)],
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const course = await coursesService.publish(request.user!, id);
+    const course = await coursesService.publish(getUser(request), id);
     return reply.ok({ published: course.status === "published" });
   });
 
   // ── Enrollment ───────────────────────────────────────────────────────
   app.post("/api/v1/courses/:id/enroll", { preHandler: [authGuard] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const result = await coursesService.enroll(request.user!.id, id);
+    const result = await coursesService.enroll(getUser(request).id, id);
+    return reply.ok(result);
+  });
+
+  // ── Soft delete / restore (owner or admin) ───────────────────────────
+  app.delete("/api/v1/courses/:id", { preHandler: [authGuard, requirePermission(Permissions.COURSE_DELETE)] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await coursesService.remove(getUser(request), id);
+    return reply.ok(result);
+  });
+
+  app.post("/api/v1/courses/:id/restore", { preHandler: [authGuard, requirePermission(Permissions.COURSE_DELETE)] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await coursesService.restore(getUser(request), id);
     return reply.ok(result);
   });
 
@@ -84,7 +97,7 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { title: string; description?: string; videoId?: string; isFree?: boolean };
-    const lesson = await coursesService.addLesson(id, body);
+    const lesson = await coursesService.addLesson(getUser(request), id, body);
     return reply.created(lesson);
   });
 
@@ -97,7 +110,7 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
-    const lesson = await coursesService.updateLesson(id, body);
+    const lesson = await coursesService.updateLesson(getUser(request), id, body);
     return reply.ok(lesson);
   });
 
@@ -112,13 +125,13 @@ export async function coursesModule(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { status?: string; progressPercent?: number; lastPositionSeconds?: number };
-    const result = await coursesService.recordProgress(request.user!.id, id, body);
+    const result = await coursesService.recordProgress(getUser(request).id, id, body);
     return reply.ok(result);
   });
 
   app.get("/api/v1/courses/:id/progress", { preHandler: [authGuard] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const rows = await coursesService.listProgress(request.user!.id, id);
+    const rows = await coursesService.listProgress(getUser(request).id, id);
     return reply.ok(rows);
   });
 }

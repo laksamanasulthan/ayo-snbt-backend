@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { authGuard, csrfGuard, requirePermission } from "../../shared/middleware/auth.js";
+import { authGuard, csrfGuard, requirePermission, getUser } from "../../shared/middleware/auth.js";
 import { Permissions } from "../../shared/rbac/permissions.js";
 import { videoService } from "./service.js";
 
@@ -14,7 +14,7 @@ export async function videoModule(app: FastifyInstance): Promise<void> {
     }
   }, async (request, reply) => {
     const { title, originalName } = request.body as { title: string; originalName?: string };
-    const video = await videoService.create(request.user!.id, { title, originalName });
+    const video = await videoService.create(getUser(request).id, { title, originalName });
     return reply.created(video);
   });
 
@@ -52,7 +52,7 @@ export async function videoModule(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { max: 120, timeWindow: 60_000 } }
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    await videoService.assertCanStream(request.user!.id, id, request.user!.roles);
+    await videoService.assertCanStream(getUser(request).id, id, getUser(request).roles);
     const url = await videoService.streamMasterPlaylist(id);
     return reply.redirect(url, 307);
   });
@@ -63,7 +63,7 @@ export async function videoModule(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const filePath = (request.params as { "*": string })["*"];
-    await videoService.assertCanStream(request.user!.id, id, request.user!.roles);
+    await videoService.assertCanStream(getUser(request).id, id, getUser(request).roles);
     const url = await videoService.streamSegment(id, filePath);
     return reply.redirect(url, 307);
   });

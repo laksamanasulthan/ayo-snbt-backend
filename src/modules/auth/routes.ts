@@ -12,7 +12,7 @@ function userSummary(u: { id: string; email: string; name: string; roles: string
 
 function clientIp(request: FastifyRequest): string {
   const fwd = request.headers["x-forwarded-for"];
-  return typeof fwd === "string" ? fwd.split(",")[0]!.trim() : (request.socket.remoteAddress ?? "unknown");
+  return typeof fwd === "string" ? (fwd.split(",")[0]?.trim() ?? "unknown") : (request.socket.remoteAddress ?? "unknown");
 }
 
 export async function authModule(app: FastifyInstance): Promise<void> {
@@ -43,7 +43,7 @@ export async function authModule(app: FastifyInstance): Promise<void> {
   // ── Register ─────────────────────────────────────────────────────────
   app.post("/api/v1/auth/register", {
     schema: {
-      body: { type: "object", required: ["email", "password", "name"], properties: { email: { type: "string" }, password: { type: "string" }, name: { type: "string" } } }
+      body: { type: "object", required: ["email", "password", "name"], properties: { email: { type: "string", format: "email" }, password: { type: "string", minLength: 8 }, name: { type: "string", minLength: 1 } } }
     }
   }, async (request, reply) => {
     const body = request.body as { email: string; password: string; name: string };
@@ -124,7 +124,7 @@ export async function authModule(app: FastifyInstance): Promise<void> {
   // ── OAuth2 callback ──────────────────────────────────────────────────
   if (env.OAUTH_ENABLED && env.OAUTH_GOOGLE_CLIENT_ID && env.OAUTH_GOOGLE_CLIENT_SECRET) {
     app.get("/auth/oauth2/google/callback", async (request, reply) => {
-      const result = await (app as never as { googleOAuth2: { getAccessTokenFromAuthorizationCodeFlow(req: FastifyRequest): Promise<{ token: { access_token: string } }> } }).googleOAuth2.getAccessTokenFromAuthorizationCodeFlow(request);
+      const result = await (app as unknown as { googleOAuth2: { getAccessTokenFromAuthorizationCodeFlow(req: FastifyRequest): Promise<{ token: { access_token: string } }> } }).googleOAuth2.getAccessTokenFromAuthorizationCodeFlow(request);
       const accessToken = result.token.access_token;
       const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
         headers: { Authorization: "Bearer " + accessToken }

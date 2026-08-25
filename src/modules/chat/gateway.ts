@@ -277,12 +277,12 @@ export async function handleWsConnection(socket: WebSocket, request: FastifyRequ
       sockets?.delete(socket);
       if (sockets?.size === 0) roomSockets.delete(roomId);
     }
-    void setOnline(userId!, false);
+    if (userId) void setOnline(userId, false);
   });
 
   // Heartbeat: keep presence TTL refreshed
   const heartbeat = setInterval(() => {
-    if (socket.readyState === 1) void setOnline(userId!, true);
+    if (socket.readyState === 1 && userId) void setOnline(userId, true);
   }, 30_000);
   heartbeat.unref?.();
   socket.on("close", () => clearInterval(heartbeat));
